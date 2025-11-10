@@ -5,6 +5,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Optimizers on N-Dimensional Terrain</title>
+    <link rel="icon" href="image.png" type="image/png" />
     <script src="https://cdn.plot.ly/plotly-2.33.0.min.js"></script>
     <style>
         html,
@@ -59,6 +60,10 @@
             min-height: 0;
         }
 
+        #chart .hoverlayer {
+            display: none !important;
+        }
+
         #chartHoverHint {
             position: absolute;
             left: 50%;
@@ -107,6 +112,7 @@
         select,
         input[type="range"],
         input[type="radio"],
+        input[type="checkbox"],
         .chip {
             accent-color: #6aa2ff;
             background: #1b1e27;
@@ -290,9 +296,9 @@
                 Steps: <code id="stepCount">0</code> / <code id="stepMax">640</code><br />
                 Grad clip: <code>6.0</code> &nbsp;|&nbsp; h: <code>1e-3</code><br />
                 <div style="margin-top:6px;">
-                    <span class="small">MC Best Loss: <code id="legendStarLoss">--</code></span><br />
-                    <span class="small">Best loss: <code id="legendOptBest">--</code></span><br />
-                    <span class="small">Current loss: <code id="legendOptLoss">--</code></span>
+                    <span class="small">All Time Best Loss: <code id="legendStarLoss">--</code></span><br />
+                    <span class="small">Cur. Best Loss: <code id="legendOptBest">--</code></span><br />
+                    <span class="small">Cur. Loss: <code id="legendOptLoss">--</code></span>
                 </div>
             </div>
 
@@ -311,11 +317,12 @@
     <script>
         /* -------------------- Parameters (tweakables) -------------------- */
         const MULTIPLIER = 4;                 // 4x duration
-        const T_BASE = 160;
+        const T_BASE = 100;
         const T = T_BASE * MULTIPLIER;        // 640
         const OUT_DOMAIN = { X_MIN: -10, X_MAX: 10, NX: 360, Y_MIN: -6, Y_MAX: 6, NY: 260 }; // base grid for contours (2D)
         const LOSS_Y_MAX = 7;
-        const LOSS_WINDOW = 150;
+        const LOSS_WINDOW = 75;
+        const TRAIL_CAP_2D = 900;
 
         let LR_SGD = 0.2, LR_MOM = 0.2, LR_RMS = 0.2, LR_ADAM = 0.2, LR_ADAMW = 0.2, LR_MUON = 0.18;
         let CONTOUR_LEVELS = 48; // stepped bands (more detail)
@@ -324,13 +331,13 @@
         const CLIP_NORM = 6.0;
         let ND = 2; // number of dimensions (2..5)
         let ANIS = [1.05, 1.8];
-        let START = [6.0, -6.0]; // seed for first two dims
+        let START = [0, 0]; // seed for first two dims
         let chartGD = null;
         let legendStarLossEl = null;
         let legendOptBestEl = null;
         let legendOptLossEl = null;
         let lossPlotInitialized = false;
-        let lossHistory = [];
+
 
         // --- Observation noise (minibatch sampling) ---
         let BATCH_SIZE = 16;                 // default batch size
@@ -862,7 +869,7 @@
                 return contourCache2D;
             }
             if (ND === 2) invalidateContourCache();
-            const { Z, xsL, ysL } = computeZPack(selectedOpt);
+            const { Z, xsL, ysL } = computeZPack(primarySelectedOpt());
             let { Zc, bias: biasUsed } = transformForColour(Z, stats.bias);
             if (biasUsed - stats.bias > 1e-6) {
                 stats = ensureColourStats(biasUsed + 0.5);
@@ -901,6 +908,13 @@
 
         /* -------------------- Simulation State -------------------- */
         const OPT_ORDER = ["SGD", "Momentum", "RMSProp", "Adam", "AdamW", "Muon"];
+        const lossTraceIndexByOpt = {};
+        let lossHistoryByOpt = {};
+        function clearLossHistories() {
+            lossHistoryByOpt = {};
+            for (const name of OPT_ORDER) lossHistoryByOpt[name] = [];
+        }
+        clearLossHistories();
         function optimizerTraceIndex(name) {
             const idx = OPT_ORDER.indexOf(name);
             if (idx < 0) return { line: -1, point: -1 };
@@ -909,6 +923,32 @@
         }
         function optimizerLineIndices() { return OPT_ORDER.map((_, idx) => 3 + idx * 2); }
         function optimizerPointIndices() { return OPT_ORDER.map((_, idx) => 4 + idx * 2); }
+        function pushTrailPoint(name, point) {
+            if (!trails[name]) trails[name] = [];
+            trails[name].push(point);
+            if (ND === 2 && trails[name].length > TRAIL_CAP_2D) {
+                trails[name].splice(0, trails[name].length - TRAIL_CAP_2D);
+            }
+        }
+        function refreshOptimizerPlot(name, point) {
+            const px = point[0];
+            const py = point[1] || 0;
+            pushTrailPoint(name, [px, py]);
+            const { line: lineIdx, point: ptIdx } = optimizerTraceIndex(name);
+            const targetChart = chartGD || elChart;
+            if (lineIdx >= 0) {
+                if (ND === 2 && chartGD) {
+                    Plotly.extendTraces(chartGD, { x: [[px]], y: [[py]] }, [lineIdx], TRAIL_CAP_2D);
+                } else {
+                    const xs = trails[name].map(p => p[0]);
+                    const ys = trails[name].map(p => p[1]);
+                    Plotly.restyle(targetChart, { x: [xs], y: [ys] }, [lineIdx]);
+                }
+            }
+            if (ptIdx >= 0) {
+                Plotly.restyle(targetChart, { x: [[px]], y: [[py]] }, [ptIdx]);
+            }
+        }
         let hiddenStart = [];
         function refreshHiddenStart(randomize = false) {
             const needed = Math.max(0, ND - 2);
@@ -930,7 +970,21 @@
             }
         }
         let optimizers = {}; let positions = {}; let trails = {}; let bestLossByOpt = {}; // trails store projected XY for plotting
-        let selectedOpt = "SGD";
+        let selectedOpts = new Set(["SGD"]);
+        function multiSelectEnabled() { return ND === 2; }
+        function ensureSelectionConstraints() {
+            if (selectedOpts.size === 0) selectedOpts.add(OPT_ORDER[0]);
+            if (!multiSelectEnabled() && selectedOpts.size > 1) {
+                const first = selectedOpts.values().next().value || OPT_ORDER[0];
+                selectedOpts = new Set([first]);
+            }
+        }
+        function primarySelectedOpt() {
+            const first = selectedOpts.values().next().value;
+            if (first) return first;
+            selectedOpts.add(OPT_ORDER[0]);
+            return OPT_ORDER[0];
+        }
 
         function startVector() {
             const v = new Array(ND).fill(0);
@@ -997,8 +1051,10 @@
         fitDomainToContainer({ rebuildLandscape: true });
         refreshHiddenStart(true);
         initOptimizers();
-        const initialLoss = refineStarWithGlobal();
-        resetLossPlot(initialLoss);
+        const { lossesByOpt: initialLosses } = refineStarWithGlobal();
+        initOptimizers(); // resync after centerViewOnStar can move START
+        resetLossPlot(initialLosses);
+        renderOptimizerControls();
 
         // colorscale helpers
         function hsvToRgb(h, s, v) { let c = v * s, x = c * (1 - Math.abs(((h / 60) % 2) - 1)), m = v - c; let r = 0, g = 0, b = 0; if (0 <= h && h < 60) { r = c; g = x; b = 0; } else if (60 <= h && h < 120) { r = x; g = c; b = 0; } else if (120 <= h && h < 180) { r = 0; g = c; b = x; } else if (180 <= h && h < 240) { r = 0; g = x; b = c; } else if (240 <= h && h < 300) { r = x; g = 0; b = c; } else { r = c; g = 0; b = x; } return [Math.round((r + m) * 255), Math.round((g + m) * 255), Math.round((b + m) * 255)]; }
@@ -1014,19 +1070,62 @@
         let contPack = buildContourPack();
         let Zc = contPack.Zc; let xs_local = contPack.xs; let ys_local = contPack.ys; let clo = contPack.lo; let chi = contPack.hi;
 
+        const DIVERGENT_CS = [
+            [0.0, '#0d1f35'],   // deep cool basin
+            [0.05, '#102c4a'],
+            [0.1, '#153c60'],
+            [0.18, '#1f4f78'],
+            [0.26, '#2a648f'],
+            [0.34, '#3779a5'],
+            [0.42, '#4a8ebb'],
+            [0.5, '#73a3c9'],   // cool shoulder
+            [0.58, '#a5b5c2'],
+            [0.64, '#c9bbb4'],
+            [0.7, '#ddae9b'],
+            [0.76, '#e59a81'],
+            [0.82, '#e89475'],
+            [0.88, '#e07058'],
+            [0.93, '#d05746'],
+            [0.97, '#bb4338'],
+            [1.0, '#a33231']    // pastel red-orange ridge
+        ];
+
         const INITIAL_LEVELS = contourLevelsForND();
-        const STEPPED_CS = buildSteppedColorscale(INITIAL_LEVELS);
         const contourSpan = Math.max(1e-6, chi - clo);
         const contour = {
             type: 'contour', z: Zc, x: xs_local, y: ys_local,
             contours: { coloring: 'fill', showlines: true, start: clo, end: chi, size: contourSpan / Math.max(1, INITIAL_LEVELS) },
-            colorscale: STEPPED_CS, zmin: clo, zmax: chi, zauto: false, autocolorscale: false,
-            line: { width: 0.7 }, showscale: false, name: 'loss', visible: true, hoverinfo: 'skip'
+            colorscale: DIVERGENT_CS, zmin: clo, zmax: chi, zauto: false, autocolorscale: false,
+            line: { width: 0.7 }, showscale: false, name: 'loss', visible: true
         };
-        const startMarker = { type: 'scatter', mode: 'markers', x: [START[0]], y: [START[1]], marker: { symbol: 'square', size: 8, color: '#ddd' }, name: 'start', hoverinfo: 'skip', visible: true };
-        const optMarker = { type: 'scatter', mode: 'markers', x: [star_vec[0]], y: [star_vec[1] || 0], marker: { symbol: 'star', size: 12, color: '#fff' }, name: 'optimum', hoverinfo: 'skip', visible: true };
-        function lineTrace(name) { return { type: 'scatter', mode: 'lines', x: [positions[name][0]], y: [positions[name][1] || 0], line: { width: 2, color: colors[name], simplify: false }, name: name + ' path', visible: name === selectedOpt, hoverinfo: 'skip' }; }
-        function pointTrace(name) { return { type: 'scatter', mode: 'markers', x: [positions[name][0]], y: [positions[name][1] || 0], marker: { size: 6, color: colors[name] }, name: name, visible: name === selectedOpt, hoverinfo: 'skip' }; }
+        const startMarker = { type: 'scatter', mode: 'markers', x: [START[0]], y: [START[1]], marker: { symbol: 'square', size: 10, color: '#ddd' }, name: 'start', visible: true, showlegend: false };
+        const optMarker = { type: 'scatter', mode: 'markers', x: [star_vec[0]], y: [star_vec[1] || 0], marker: { symbol: 'star', size: 12, color: '#fff' }, name: 'optimum', visible: true, showlegend: false };
+        function lineTrace(name) {
+            const isSelected = selectedOpts.has(name);
+            return {
+                type: 'scatter',
+                mode: 'lines',
+                x: [positions[name][0]],
+                y: [positions[name][1] || 0],
+                line: { width: 2, color: colors[name], simplify: false },
+                name: name,
+                visible: isSelected,
+                showlegend: isSelected
+            };
+        }
+        function pointTrace(name) {
+            const isSelected = selectedOpts.has(name);
+            return {
+                type: 'scatter',
+                mode: 'markers',
+                x: [positions[name][0]],
+                y: [positions[name][1] || 0],
+                marker: { size: 6, color: colors[name] },
+                name: `${name} head`,
+                visible: isSelected,
+                showlegend: false
+            };
+        }
 
         const traces = [contour, startMarker, optMarker];
         for (const name of OPT_ORDER) {
@@ -1035,14 +1134,23 @@
 
         const layout = {
             paper_bgcolor: '#0b0c10', plot_bgcolor: '#0b0c10', margin: { l: 20, r: 10, t: 10, b: 30 },
-            xaxis: { title: 'x', gridcolor: '#223', zerolinecolor: '#223', automargin: true, autorange: true },
-            yaxis: { title: 'y', gridcolor: '#223', zerolinecolor: '#223', automargin: true, autorange: true },
+            xaxis: {
+                title: '',
+                gridcolor: '#223', zerolinecolor: '#223', automargin: true, autorange: true,
+                showticklabels: false, ticks: '', ticklen: 0
+            },
+            yaxis: {
+                title: '',
+                gridcolor: '#223', zerolinecolor: '#223', automargin: true, autorange: true,
+                showticklabels: false, ticks: '', ticklen: 0
+            },
             legend: { bgcolor: '#12131a', bordercolor: '#223', borderwidth: 1, font: { color: '#e6eef7' } },
             hovermode: 'closest'
         };
 
         Plotly.newPlot(elChart, traces, layout, { responsive: true, displaylogo: false }).then((gd) => {
             chartGD = gd; safeResize();
+            updateStartMarker();
             const onResize = debounce(() => { if (!chartGD) return; fitDomainToContainer(); refreshContour(); safeResize(); }, 100);
             window.addEventListener('resize', onResize);
             const ro = new ResizeObserver(() => onResize()); try { ro.observe(elChart); } catch (e) { }
@@ -1063,13 +1171,18 @@
             const ptXs = OPT_ORDER.map(n => [positions[n][0]]); const ptYs = OPT_ORDER.map(n => [positions[n][1] || 0]);
             Plotly.restyle(elChart, { x: ptXs, y: ptYs }, ptIndices);
             updateStartMarker(); // move start marker
-            const curLoss = updateLegendLosses();
-            resetLossPlot(curLoss);
+            const { lossesByOpt } = updateLegendLosses();
+            resetLossPlot(lossesByOpt);
             // contours unchanged in 2D; ND>2 will recompute inside refreshContour
             refreshContour();
         }
 
-        elChart.on('plotly_click', (ev) => { const p = ev && ev.points && ev.points[0]; if (!p) return; setStart(p.x, p.y); });
+        elChart.on('plotly_click', (ev) => {
+            const p = ev && ev.points && ev.points[0];
+            if (!p) return;
+            setStart(p.x, p.y);
+        });
+        elChart.on('plotly_doubleclick', () => false);
 
         function refreshContour() {
             // Use cached pack in 2D; recompute for ND>2
@@ -1077,12 +1190,11 @@
             const levels = Math.max(1, contourLevelsForND());
             const span = Math.max(1e-6, contPack.hi - contPack.lo);
             const size = span / levels;
-            const cs = buildSteppedColorscale(levels);
             Plotly.restyle(elChart, {
                 z: [contPack.Zc], x: [contPack.xs], y: [contPack.ys], zmin: [contPack.lo], zmax: [contPack.hi],
                 zauto: [false], autocolorscale: [false],
                 'contours.start': [contPack.lo], 'contours.end': [contPack.hi], 'contours.size': [size], 'contours.coloring': ['fill'],
-                colorscale: [cs]
+                colorscale: [DIVERGENT_CS]
             }, [0]);
             updateStarMarker();
             Plotly.relayout(elChart, { 'xaxis.autorange': true, 'yaxis.autorange': true });
@@ -1117,35 +1229,45 @@
 
         function formatLossValue(v) { return Number.isFinite(v) ? v.toFixed(3) : '--'; }
         function updateLegendLosses() {
-            const pos = safePos(selectedOpt);
-            const curLoss = (pos && pos.length === ND && typeof loss_nd === 'function') ? loss_nd(pos) : NaN;
-            if (Number.isFinite(curLoss)) {
-                const prev = Number.isFinite(bestLossByOpt[selectedOpt]) ? bestLossByOpt[selectedOpt] : Number.POSITIVE_INFINITY;
-                if (curLoss < prev) bestLossByOpt[selectedOpt] = curLoss;
-                if (!Number.isFinite(starLossValue) || curLoss + 1e-9 < starLossValue) {
-                    adoptLiveBest(pos, curLoss);
+            ensureSelectionConstraints();
+            const focus = primarySelectedOpt();
+            let focusLoss = NaN;
+            const lossesByOpt = {};
+            for (const name of selectedOpts) {
+                const pos = safePos(name);
+                const curLoss = (pos && pos.length === ND && typeof loss_nd === 'function') ? loss_nd(pos) : NaN;
+                if (Number.isFinite(curLoss)) {
+                    lossesByOpt[name] = curLoss;
+                    const prev = Number.isFinite(bestLossByOpt[name]) ? bestLossByOpt[name] : Number.POSITIVE_INFINITY;
+                    if (curLoss < prev) bestLossByOpt[name] = curLoss;
+                    if (!Number.isFinite(starLossValue) || curLoss + 1e-9 < starLossValue) {
+                        adoptLiveBest(pos, curLoss);
+                    }
+                    if (name === focus) focusLoss = curLoss;
                 }
             }
             if (legendStarLossEl) legendStarLossEl.textContent = formatLossValue(starLossValue);
             if (legendOptBestEl) {
-                const bestVal = bestLossByOpt[selectedOpt];
+                const bestVal = bestLossByOpt[focus];
                 legendOptBestEl.textContent = formatLossValue(bestVal);
             }
-            if (legendOptLossEl) legendOptLossEl.textContent = formatLossValue(curLoss);
-            return curLoss;
+            if (legendOptLossEl) legendOptLossEl.textContent = formatLossValue(focusLoss);
+            return { focusLoss, lossesByOpt };
         }
 
         /* -------------------- Loss sparkline -------------------- */
         function initLossPlot() {
             if (!lossPlotEl || lossPlotInitialized) return;
-            const lossTrace = {
+            const lossTraces = OPT_ORDER.map((name) => ({
                 type: 'scatter',
                 mode: 'lines',
                 x: [],
                 y: [],
-                line: { color: '#6aa2ff', width: 2 },
-                hoverinfo: 'skip'
-            };
+                line: { color: colors[name], width: 2 },
+                name,
+                showlegend: false,
+                visible: selectedOpts.has(name)
+            }));
             const lossLayout = {
                 paper_bgcolor: '#12131a',
                 plot_bgcolor: '#0b0c10',
@@ -1162,44 +1284,81 @@
                     automargin: true
                 },
                 yaxis: {
-                    title: 'Loss Value',
+                    title: { text: 'Loss Value', standoff: 18 },
                     color: '#b7c4d9',
                     gridcolor: '#1d2332',
                     zeroline: true,
                     zerolinecolor: '#2d3446',
                     tickfont: { size: 10 },
-                    range: lossPlotRangeBounds()
+                    range: lossPlotRangeBounds(),
+                    automargin: true
                 }
             };
-            Plotly.newPlot(lossPlotEl, [lossTrace], lossLayout, { displayModeBar: false, responsive: true });
+            Plotly.newPlot(lossPlotEl, lossTraces, lossLayout, { displayModeBar: false, responsive: true });
+            OPT_ORDER.forEach((name, idx) => { lossTraceIndexByOpt[name] = idx; });
             lossPlotInitialized = true;
         }
         function lossPlotMaxPoints() { return Math.max(1, T); }
-        function resetLossPlot(seedLoss = null) {
+        function resetLossPlot(seedLosses = null) {
             initLossPlot();
             if (!lossPlotEl || !lossPlotInitialized) return;
-            Plotly.restyle(lossPlotEl, { x: [[]], y: [[]] });
+            const traceIndices = OPT_ORDER.map((_, idx) => idx);
+            if (traceIndices.length) {
+                const clearedX = traceIndices.map(() => []);
+                const clearedY = traceIndices.map(() => []);
+                Plotly.restyle(lossPlotEl, { x: clearedX, y: clearedY }, traceIndices);
+            }
             Plotly.relayout(lossPlotEl, { 'xaxis.range': [0, T], 'yaxis.range': lossPlotRangeBounds() });
-            lossHistory = [];
-            if (Number.isFinite(seedLoss)) appendLossPoint(0, seedLoss);
+            clearLossHistories();
+            if (seedLosses && typeof seedLosses === 'object') {
+                for (const name of selectedOpts) {
+                    const v = seedLosses[name];
+                    if (Number.isFinite(v)) appendLossPoint(name, 0, v);
+                }
+            } else if (Number.isFinite(seedLosses)) {
+                const focusName = primarySelectedOpt();
+                appendLossPoint(focusName, 0, seedLosses);
+            }
+            syncLossPlotVisibility();
         }
-        function appendLossPoint(step, loss) {
-            if (!lossPlotEl || !Number.isFinite(loss)) return;
+        function syncLossPlotVisibility() {
+            if (!lossPlotEl || !lossPlotInitialized) return;
+            for (const name of OPT_ORDER) {
+                const idx = lossTraceIndexByOpt[name];
+                if (typeof idx !== 'number') continue;
+                Plotly.restyle(lossPlotEl, { visible: [selectedOpts.has(name)] }, [idx]);
+            }
+        }
+        function appendLossPoint(name, step, loss) {
+            if (!lossPlotEl || !Number.isFinite(loss) || !selectedOpts.has(name)) return;
             initLossPlot();
             if (!lossPlotInitialized) return;
-            Plotly.extendTraces(lossPlotEl, { x: [[step]], y: [[loss]] }, [0], lossPlotMaxPoints());
-            lossHistory.push(loss);
-            if (lossHistory.length > LOSS_WINDOW) lossHistory.shift();
+            const traceIdx = lossTraceIndexByOpt[name];
+            if (typeof traceIdx !== 'number') return;
+            Plotly.extendTraces(lossPlotEl, { x: [[step]], y: [[loss]] }, [traceIdx], lossPlotMaxPoints());
+            const bucket = lossHistoryByOpt[name];
+            if (bucket) {
+                bucket.push(loss);
+                if (bucket.length > LOSS_WINDOW) bucket.shift();
+            }
             applyLossPlotRange();
         }
         function lossPlotRangeBounds() {
-            const historyMin = lossHistory.length ? Math.min(...lossHistory) : null;
-            const historyMax = lossHistory.length ? Math.max(...lossHistory) : null;
+            let historyMin = null;
+            let historyMax = null;
+            for (const arr of Object.values(lossHistoryByOpt)) {
+                for (const v of arr) {
+                    if (!Number.isFinite(v)) continue;
+                    if (historyMin === null || v < historyMin) historyMin = v;
+                    if (historyMax === null || v > historyMax) historyMax = v;
+                }
+            }
             const minBase = Number.isFinite(starLossValue) ? starLossValue : 0;
             const min = historyMin !== null ? historyMin : minBase;
             const maxBase = LOSS_Y_MAX;
             const maxCandidate = historyMax !== null ? historyMax : maxBase;
-            const max = Math.max(maxCandidate, min + 1e-3);
+            const span = Math.max((maxCandidate - min), 0.05);
+            const max = min + Math.max(span, 1e-3);
             return [min, max];
         }
         function applyLossPlotRange() {
@@ -1229,8 +1388,7 @@
             reseedLandscape();
             refreshHiddenStart(true);
             refineStarWithGlobal();
-            refreshContour();
-            resetAll();
+            resetAll({ forceContour: true });
         }
 
         /* -------------------- LR schedule -------------------- */
@@ -1251,29 +1409,92 @@
 
         /* -------------------- Simulation loop -------------------- */
         function stepOnce() {
+            ensureSelectionConstraints();
             const lrEff = computeLREffective(frameIdx, T);
-            if (optimizers[selectedOpt]) optimizers[selectedOpt].lr = lrEff;
+            for (const name of selectedOpts) {
+                if (optimizers[name]) optimizers[name].lr = lrEff;
+            }
             updateEffectiveLRLabel();
 
             if (frameIdx >= T) return;
             frameIdx++; elStepCount.textContent = frameIdx.toString();
 
-            // update only the selected optimizer in ND
-            const pos = safePos(selectedOpt);
-            let g = grad_observed_nd(pos);
-            g = clampMagVec(g, CLIP_NORM);
-            const next = optimizers[selectedOpt].step(pos, g);
-            positions[selectedOpt] = next;
-            if (!trails[selectedOpt]) trails[selectedOpt] = [];
-            trails[selectedOpt].push([next[0], next[1] || 0]);
+            // --- Data for batched Plotly updates ---
+            let lineIndices_to_update = [];
+            let lineXs_to_add = [];
+            let lineYs_to_add = [];
+            let ptIndices_to_update = [];
+            let ptXs_to_move = [];
+            let ptYs_to_move = [];
 
-            const { line: lineIdx, point: ptIdx } = optimizerTraceIndex(selectedOpt);
-            if (lineIdx >= 0) Plotly.restyle(elChart, { x: [trails[selectedOpt].map(p => p[0])], y: [trails[selectedOpt].map(p => p[1])] }, [lineIdx]);
-            if (ptIdx >= 0) Plotly.restyle(elChart, { x: [[next[0]]], y: [[next[1] || 0]] }, [ptIdx]);
-            const curLoss = updateLegendLosses();
-            appendLossPoint(frameIdx, curLoss);
+            // --- ND > 2 trail data ---
+            let lineXs_full = {};
+            let lineYs_full = {};
 
-            // recompute 2D colour slice only for ND>2; throttle refresh for speed
+            for (const name of selectedOpts) {
+                const pos = safePos(name);
+                let g = grad_observed_nd(pos);
+                g = clampMagVec(g, CLIP_NORM);
+                const next = optimizers[name].step(pos, g);
+                positions[name] = next;
+
+                // --- Collect update data instead of plotting ---
+                const px = next[0];
+                const py = next[1] || 0;
+                pushTrailPoint(name, [px, py]); // This just updates the data array, which is fast
+
+                const { line: lineIdx, point: ptIdx } = optimizerTraceIndex(name);
+
+                if (ND === 2) {
+                    // Batch data for extendTraces
+                    lineIndices_to_update.push(lineIdx);
+                    lineXs_to_add.push([px]);
+                    lineYs_to_add.push([py]);
+                } else {
+                    // For ND > 2, we restyle the whole line
+                    const trail = trails[name];
+                    lineXs_full[lineIdx] = trail.map(p => p[0]);
+                    lineYs_full[lineIdx] = trail.map(p => p[1]);
+                }
+
+                // Batch data for restyle (points)
+                ptIndices_to_update.push(ptIdx);
+                ptXs_to_move.push([px]);
+                ptYs_to_move.push([py]);
+            }
+
+            // --- Now, apply all batched updates ONCE ---
+            const targetChart = chartGD || elChart;
+            if (chartGD) {
+                if (ND === 2 && lineIndices_to_update.length > 0) {
+                    // One call for all line extensions
+                    Plotly.extendTraces(chartGD, { x: lineXs_to_add, y: lineYs_to_add }, lineIndices_to_update, TRAIL_CAP_2D);
+                } else if (ND > 2 && Object.keys(lineXs_full).length > 0) {
+                    // One call for all line restyles (for ND>2)
+                    const lineIndices = Object.keys(lineXs_full).map(Number);
+                    const lineData = {
+                        x: lineIndices.map(idx => lineXs_full[idx]),
+                        y: lineIndices.map(idx => lineYs_full[idx])
+                    };
+                    Plotly.restyle(targetChart, lineData, lineIndices);
+                }
+
+                if (ptIndices_to_update.length > 0) {
+                    // One call for all point updates
+                    Plotly.restyle(targetChart, { x: ptXs_to_move, y: ptYs_to_move }, ptIndices_to_update);
+                }
+            }
+
+            // (This logic was inside refreshOptimizerPlot, so we no longer need that function)
+            // We can delete refreshOptimizerPlot and just call pushTrailPoint directly.
+
+            // --- Rest of your function ---
+            const { lossesByOpt } = updateLegendLosses();
+            for (const name of selectedOpts) {
+                const lossVal = lossesByOpt[name];
+                if (Number.isFinite(lossVal)) appendLossPoint(name, frameIdx, lossVal);
+            }
+
             if (ND > 2) {
                 contourFrameTicker++;
                 if (contourFrameTicker >= contourUpdateStride()) {
@@ -1315,14 +1536,18 @@
             playPauseBtn.textContent = "▶︎ Play";
         }
         function updateVisibility() {
+            const targetChart = chartGD || elChart;
             for (const name of OPT_ORDER) {
                 const { line, point } = optimizerTraceIndex(name);
-                const vis = (name === selectedOpt) ? true : 'legendonly';
-                if (line >= 0) Plotly.restyle(elChart, { visible: vis }, [line]);
-                if (point >= 0) Plotly.restyle(elChart, { visible: vis }, [point]);
+                const isSelected = selectedOpts.has(name);
+                if (line >= 0) Plotly.restyle(targetChart, { visible: [isSelected], showlegend: [isSelected] }, [line]);
+                if (point >= 0) Plotly.restyle(targetChart, { visible: [isSelected], showlegend: [false] }, [point]);
             }
+            syncLossPlotVisibility();
         }
-        function resetAll() {
+        function resetAll(opts = {}) {
+            const { forceContour = false } = opts;
+            ensureSelectionConstraints();
             stopTimer(); frameIdx = 0; updateEffectiveLRLabel(); elStepCount.textContent = "0"; initOptimizers();
             const lineIndices = optimizerLineIndices(); const ptIndices = optimizerPointIndices();
             const lineXs = OPT_ORDER.map(n => [positions[n][0]]); const lineYs = OPT_ORDER.map(n => [positions[n][1] || 0]);
@@ -1330,26 +1555,62 @@
             const ptXs = OPT_ORDER.map(n => [positions[n][0]]); const ptYs = OPT_ORDER.map(n => [positions[n][1] || 0]);
             Plotly.restyle(elChart, { x: ptXs, y: ptYs }, ptIndices);
             updateVisibility();
-            refreshContour();
-            const curLoss = updateLegendLosses();
-            resetLossPlot(curLoss);
+            if (forceContour || ND > 2) {
+                refreshContour();
+            }
+            const { lossesByOpt } = updateLegendLosses();
+            resetLossPlot(lossesByOpt);
         }
-        function setSelected(name) {
-            selectedOpt = name;
-            stopTimer();
-            frameIdx = 0;
-            if (elStepCount) elStepCount.textContent = "0";
-            updateEffectiveLRLabel();
-            initOptimizers();
-            const lineIndices = optimizerLineIndices(); const ptIndices = optimizerPointIndices();
-            const lineXs = OPT_ORDER.map(n => [positions[n][0]]); const lineYs = OPT_ORDER.map(n => [positions[n][1] || 0]);
-            Plotly.restyle(elChart, { x: lineXs, y: lineYs }, lineIndices);
-            const ptXs = OPT_ORDER.map(n => [positions[n][0]]); const ptYs = OPT_ORDER.map(n => [positions[n][1] || 0]);
-            Plotly.restyle(elChart, { x: ptXs, y: ptYs }, ptIndices);
-            updateVisibility();
-            refreshContour();
-            const curLoss = updateLegendLosses();
-            resetLossPlot(curLoss);
+        function optimizerSwatchClass(name) {
+            switch (name) {
+                case "SGD": return "sgd";
+                case "Momentum": return "mom";
+                case "RMSProp": return "rms";
+                case "Adam": return "adam";
+                case "AdamW": return "adamw";
+                case "Muon": return "muon";
+                default: return "";
+            }
+        }
+        function renderOptimizerControls() {
+            const container = document.getElementById('optRadios');
+            if (!container) return;
+            ensureSelectionConstraints();
+            const multi = multiSelectEnabled();
+            container.innerHTML = '';
+            for (const name of OPT_ORDER) {
+                const label = document.createElement('label');
+                const input = document.createElement('input');
+                input.type = multi ? 'checkbox' : 'radio';
+                input.name = 'optChoice';
+                input.value = name;
+                input.checked = selectedOpts.has(name);
+                input.addEventListener('change', (ev) => {
+                    handleOptimizerSelection(name, !!ev.target.checked);
+                });
+                const swatch = document.createElement('span');
+                swatch.className = `legendSwatch ${optimizerSwatchClass(name)}`;
+                label.appendChild(input);
+                label.appendChild(swatch);
+                label.appendChild(document.createTextNode(name));
+                container.appendChild(label);
+            }
+        }
+        function handleOptimizerSelection(name, shouldSelect) {
+            if (multiSelectEnabled()) {
+                if (shouldSelect) {
+                    selectedOpts.add(name);
+                } else {
+                    selectedOpts.delete(name);
+                    if (selectedOpts.size === 0) selectedOpts.add(name);
+                }
+            } else {
+                if (!shouldSelect) return;
+                selectedOpts = new Set([name]);
+            }
+            ensureSelectionConstraints();
+            renderOptimizerControls();
+            resetAll();
         }
         function applyND(n) {
             ND = n;
@@ -1365,6 +1626,9 @@
             setDomain(X_MIN, X_MAX, Y_MIN, Y_MAX, { rebuildLandscape: true }); // rebuild DOM_MIN/DOM_MAX & spikes
             refreshHiddenStart(true);
             // rebuild optimizers
+            ensureSelectionConstraints();
+            renderOptimizerControls();
+            refineStarWithGlobal();
             initOptimizers();
             resetAll();
             invalidateContourCache();
@@ -1397,11 +1661,6 @@
         stepBtn.onclick = () => { stopTimer(); stepOnce(); };
         resetBtn.onclick = resetAll;
         regenBtn.onclick = () => { stopTimer(); regenerateLandscape(); };
-
-        // Radio group for single optimizer selection
-        for (const el of document.querySelectorAll('#optRadios input[type="radio"][name="optChoice"]')) {
-            el.addEventListener('change', (ev) => { if (ev.target.checked) { setSelected(ev.target.value); } });
-        }
 
         // Learning rate single slider (affects all five)
         lrSlider.oninput = (e) => { const v = parseFloat(e.target.value); LR_SGD = LR_MOM = LR_RMS = LR_ADAM = LR_ADAMW = LR_MUON = v; updateEffectiveLRLabel(); };
