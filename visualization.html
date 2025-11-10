@@ -1,0 +1,1410 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Optimizers on N-Dimensional Terrain</title>
+    <script src="https://cdn.plot.ly/plotly-2.33.0.min.js"></script>
+    <style>
+        html,
+        body {
+            height: 100%;
+        }
+
+        body {
+            font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+            margin: 0;
+            background: #0b0c10;
+            color: #e6eef7;
+            height: 100%;
+            display: grid;
+            grid-template-rows: auto 1fr;
+        }
+
+        header {
+            padding: 12px 16px;
+            border-bottom: 1px solid #223;
+        }
+
+        .wrap {
+            display: grid;
+            grid-template-columns: 380px 1fr;
+            gap: 14px;
+            padding: 12px 16px;
+            height: 100%;
+            min-height: 0;
+        }
+
+        #controls {
+            background: #12131a;
+            border: 1px solid #223;
+            border-radius: 10px;
+            padding: 12px;
+            position: sticky;
+            top: 12px;
+            height: fit-content;
+        }
+
+        #chart {
+            width: 100%;
+            height: 100%;
+            min-height: 0;
+        }
+
+        .row {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin: 8px 0;
+            flex-wrap: wrap;
+        }
+
+        .small {
+            opacity: 0.9;
+            font-size: 12px;
+        }
+
+        #lossPlotContainer {
+            margin-top: 10px;
+        }
+
+        #lossPlot {
+            width: 100%;
+            height: 140px;
+        }
+
+        button,
+        select,
+        input[type="range"],
+        input[type="radio"],
+        .chip {
+            accent-color: #6aa2ff;
+            background: #1b1e27;
+            color: #e6eef7;
+            border: 1px solid #334;
+            border-radius: 8px;
+            padding: 8px 10px;
+            cursor: pointer;
+        }
+
+        button:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+        }
+
+        .grid2 {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 6px 10px;
+        }
+
+        .divider {
+            border-top: 1px solid #223;
+            margin: 10px 0;
+        }
+
+        .legendSwatch {
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            display: inline-block;
+            margin-right: 6px;
+        }
+
+        .sgd {
+            background: #1f77b4;
+        }
+
+        .mom {
+            background: #ff7f0e;
+        }
+
+        .rms {
+            background: #2ca02c;
+        }
+
+        .adam {
+            background: #d62728;
+        }
+
+        .adamw {
+            background: #9467bd;
+        }
+
+        .muon {
+            background: #8c564b;
+        }
+
+        code {
+            background: #10131a;
+            border: 1px solid #223;
+            border-radius: 6px;
+            padding: 2px 6px;
+        }
+
+        .optgroup {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 6px 12px;
+        }
+
+        .optgroup label {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+    </style>
+</head>
+
+<body>
+    <header>
+        <div class="row" style="justify-content:space-between">
+            <div>
+                <div style="font-size:18px; font-weight:600">ND Optimizer Arena · Fractal Basins & Orthogonal Spikes
+                </div>
+                <div class="small">Procedural loss field • clipped noisy grads • log-spectrum colouring • live 2–15D
+                    slices</div>
+            </div>
+            <div class="small">Click to set start • slice updates with other dims.</div>
+        </div>
+    </header>
+
+    <div class="wrap">
+        <div id="controls">
+            <div style="font-weight:600; margin-bottom:6px;">Playback</div>
+            <div class="row">
+                <button id="playPause">▶︎ Play</button>
+                <button id="stepBtn">Step</button>
+                <button id="resetBtn">Reset</button>
+                <button id="regenBtn">Regenerate</button>
+            </div>
+            <div class="divider"></div>
+
+            <div style="font-weight:600; margin-bottom:6px;">Optimizer</div>
+            <div class="optgroup" id="optRadios">
+                <label><input type="radio" name="optChoice" value="SGD" checked> <span
+                        class="legendSwatch sgd"></span>SGD</label>
+                <label><input type="radio" name="optChoice" value="Momentum"> <span
+                        class="legendSwatch mom"></span>Momentum</label>
+                <label><input type="radio" name="optChoice" value="RMSProp"> <span
+                        class="legendSwatch rms"></span>RMSProp</label>
+                <label><input type="radio" name="optChoice" value="Adam"> <span
+                        class="legendSwatch adam"></span>Adam</label>
+                <label><input type="radio" name="optChoice" value="AdamW"> <span
+                        class="legendSwatch adamw"></span>AdamW</label>
+                <label><input type="radio" name="optChoice" value="Muon"> <span
+                        class="legendSwatch muon"></span>Muon</label>
+            </div>
+
+            <div class="row">
+                <label>Learning rate</label>
+                <input id="lrSlider" type="range" min="0.02" max="0.6" step="0.02" value="0.2" />
+                <span class="small">Eff: <code id="lr_eff_lbl">0.20</code></span>
+            </div>
+
+            <div class="row">
+                <label>Batch size</label>
+                <input id="batchSlider" type="range" min="1" max="128" step="1" value="16" />
+                <span class="small"><code id="batchLbl">16</code></span>
+            </div>
+
+            <div class="row">
+                <label>LR schedule</label>
+                <select id="lrSched">
+                    <option value="constant" selected>Constant</option>
+                    <option value="step">Step decay</option>
+                    <option value="cosine">Cosine</option>
+                    <option value="exp">Exponential</option>
+                    <option value="warmup_cosine">Warmup + Cosine</option>
+                </select>
+            </div>
+
+            <div id="schedParams" class="small" style="display:grid; grid-template-columns: 1fr 1fr; gap:8px;">
+                <!-- Step decay params -->
+                <label id="pStepSizeLbl" style="display:none;">Step size k: <code id="pStepSizeVal">40</code></label>
+                <input id="pStepSize" type="range" min="5" max="160" step="5" value="40" style="display:none;" />
+
+                <label id="pStepGammaLbl" style="display:none;">Gamma: <code id="pStepGammaVal">0.5</code></label>
+                <input id="pStepGamma" type="range" min="0.1" max="0.99" step="0.01" value="0.5"
+                    style="display:none;" />
+
+                <!-- Cosine params -->
+                <label id="pCosMinLbl" style="display:none;">Min factor: <code id="pCosMinVal">0.1</code></label>
+                <input id="pCosMin" type="range" min="0" max="1" step="0.01" value="0.1" style="display:none;" />
+
+                <!-- Exponential params -->
+                <label id="pExpGammaLbl" style="display:none;">Gamma: <code id="pExpGammaVal">0.995</code></label>
+                <input id="pExpGamma" type="range" min="0.90" max="0.999" step="0.001" value="0.995"
+                    style="display:none;" />
+
+                <!-- Warmup+Cosine params -->
+                <label id="pWarmFracLbl" style="display:none;">Warmup frac: <code id="pWarmFracVal">0.10</code></label>
+                <input id="pWarmFrac" type="range" min="0" max="0.5" step="0.01" value="0.10" style="display:none;" />
+                <label id="pWarmMinLbl" style="display:none;">Min factor: <code id="pWarmMinVal">0.1</code></label>
+                <input id="pWarmMin" type="range" min="0" max="1" step="0.01" value="0.1" style="display:none;" />
+            </div>
+
+            <div class="divider"></div>
+
+            <div style="font-weight:600; margin-bottom:6px;">Dimensions</div>
+            <div class="row">
+                <label>n_dimensions</label>
+                <input id="dimSlider" type="range" min="2" max="15" step="1" value="2" />
+                <span class="small"><code id="dimLbl">2D</code></span>
+            </div>
+
+            <div class="divider"></div>
+
+            <div style="font-weight:600; margin-bottom:6px;">Info</div>
+            <div class="small">
+                Steps: <code id="stepCount">0</code> / <code id="stepMax">640</code><br />
+                Grad clip: <code>6.0</code> &nbsp;|&nbsp; h: <code>1e-3</code><br />
+                <div style="margin-top:6px;">
+                    <span class="small">MC Best Loss: <code id="legendStarLoss">--</code></span><br />
+                    <span class="small">Best loss: <code id="legendOptBest">--</code></span><br />
+                    <span class="small">Current loss: <code id="legendOptLoss">--</code></span>
+                </div>
+            </div>
+
+            <div id="lossPlotContainer">
+                <div style="font-weight:600; margin-bottom:4px;">Loss curve</div>
+                <div id="lossPlot"></div>
+            </div>
+        </div>
+
+        <div id="chart"></div>
+    </div>
+
+    <script>
+        /* -------------------- Parameters (tweakables) -------------------- */
+        const MULTIPLIER = 4;                 // 4x duration
+        const T_BASE = 160;
+        const T = T_BASE * MULTIPLIER;        // 640
+        const OUT_DOMAIN = { X_MIN: -10, X_MAX: 10, NX: 360, Y_MIN: -6, Y_MAX: 6, NY: 260 }; // base grid for contours (2D)
+        const LOSS_Y_MAX = 7;
+        const LOSS_WINDOW = 150;
+
+        let LR_SGD = 0.2, LR_MOM = 0.2, LR_RMS = 0.2, LR_ADAM = 0.2, LR_ADAMW = 0.2, LR_MUON = 0.18;
+        let CONTOUR_LEVELS = 48; // stepped bands (more detail)
+        let x_center = 0.0, y_center = 0.0; // center for first 2 dims
+        const GRAD_H = 1e-3;
+        const CLIP_NORM = 6.0;
+        let ND = 2; // number of dimensions (2..5)
+        let ANIS = [1.05, 1.8];
+        let START = [6.0, -6.0]; // seed for first two dims
+        let chartGD = null;
+        let legendStarLossEl = null;
+        let legendOptBestEl = null;
+        let legendOptLossEl = null;
+        let lossPlotInitialized = false;
+        let lossHistory = [];
+
+        // --- Observation noise (minibatch sampling) ---
+        let BATCH_SIZE = 16;                 // default batch size
+        const BASE_NOISE_STD = 1.4;            // base per-axis std
+        function effectiveNoiseStd() { return BASE_NOISE_STD / Math.sqrt(BATCH_SIZE); }
+
+        let LOG_DENT_W = 0; // radial log sink weight
+
+        // --- Random-search refinement around current optimum ---
+        const REFINE_ITERS = 5;       // per request
+        const REFINE_SAMPLES = 400;     // per iteration
+        const REFINE_RADIUS = 3.0;     // radius
+        const GLOBAL_GUESS_SAMPLES = 400;
+        const POLISH_STEPS = 120;
+
+        // domain ranges per dim (filled in setDomain and ND changes)
+        let DOM_MIN = [], DOM_MAX = [];
+
+        /* -------------------- Seeded RNG (Mulberry32) -------------------- */
+        function mulberry32(a) { return function () { let t = a += 0x6D2B79F5; t = Math.imul(t ^ (t >>> 15), t | 1); t ^= t + Math.imul(t ^ (t >>> 7), t | 61); return ((t ^ (t >>> 14)) >>> 0) / 4294967296; } }
+        const rngSeed = 202;
+        let landscapeSeed = 202;
+        let LANDSCAPE_NONCE = 0;
+        const rng = mulberry32(rngSeed);
+
+        /* -------------------- Fourier basis (ND) -------------------- */
+        const K_base = 18, octaves = 2;
+        let fbasis = []; // array of {k1:Float64Array(ND), k2:Float64Array(ND), p1:number, p2:number, amp:number}
+        function reseedBaseWithSeed(seed) {
+            const lrng = mulberry32((seed >>> 0));
+            function u(min, max) { return min + lrng() * (max - min); }
+            fbasis = [];
+            for (let o = 0; o < octaves; o++) {
+                const freq = 2 ** o; const amp_scale = 0.6 ** o;
+                for (let k = 0; k < K_base; k++) {
+                    const k1 = new Array(ND); const k2 = new Array(ND);
+                    for (let d = 0; d < ND; d++) {
+                        const base = u(0.3, 2.0) * freq;
+                        k1[d] = base;
+                        k2[d] = (d === 0 ? 0.85 : 1.0) * base * (d % 2 === 0 ? 1.0 : -1.0);
+                    }
+                    fbasis.push({
+                        k1: Float64Array.from(k1),
+                        k2: Float64Array.from(k2),
+                        p1: u(0, 2 * Math.PI),
+                        p2: u(0, 2 * Math.PI),
+                        amp: u(0.08, 0.22) * amp_scale
+                    });
+                }
+            }
+        }
+
+        /* -------------------- Gaussian sampler (Box–Muller) -------------------- */
+        let _bmHasSpare = false, _bmSpare = 0;
+        let randnScratch = null;
+        function randn() {
+            if (_bmHasSpare) { _bmHasSpare = false; return _bmSpare; }
+            let u = 0, v = 0; while (u === 0) u = rng(); while (v === 0) v = rng();
+            const mag = Math.sqrt(-2.0 * Math.log(u));
+            const z0 = mag * Math.cos(2 * Math.PI * v);
+            const z1 = mag * Math.sin(2 * Math.PI * v);
+            _bmHasSpare = true; _bmSpare = z1; return z0;
+        }
+        function randnN(std, n) {
+            if (!randnScratch || randnScratch.length !== n) randnScratch = new Float64Array(n);
+            const out = randnScratch;
+            for (let i = 0; i < n; i++) out[i] = randn() * std;
+            return out;
+        }
+
+        /* -------------------- Utility -------------------- */
+        function add(a, b) { const n = a.length; const o = new Array(n); for (let i = 0; i < n; i++) o[i] = a[i] + b[i]; return o; }
+        function sub(a, b) { const n = a.length; const o = new Array(n); for (let i = 0; i < n; i++) o[i] = a[i] - b[i]; return o; }
+        function scale(a, s) { const n = a.length; const o = new Array(n); for (let i = 0; i < n; i++) o[i] = a[i] * s; return o; }
+        function dot(a, b) { let s = 0; for (let i = 0; i < a.length; i++) s += a[i] * b[i]; return s; }
+        function norm(a) { return Math.hypot.apply(null, a); }
+        function zeros(n) { return Array.from({ length: n }, () => 0); }
+        function clampMagVec(g, maxn) { const n = norm(g); if (n <= maxn) return g; const s = maxn / (n || 1); return scale(g, s); }
+        function clamp(v, lo, hi) { return Math.min(hi, Math.max(lo, v)); }
+        /* -------------------- Muon helpers -------------------- */
+        const MUON_NS_COEFFS = { a: 3.4445, b: -4.7750, c: 2.0315 };
+        function muonMatrixShape(n) {
+            const len = Math.max(2, n || 2);
+            const rows = Math.max(2, Math.floor(Math.sqrt(len)));
+            const cols = Math.max(2, Math.ceil(len / rows));
+            return { rows, cols };
+        }
+        function vecToMatrix(vec, rows, cols) {
+            const out = new Float64Array(rows * cols);
+            for (let i = 0; i < rows * cols; i++) out[i] = vec[i] || 0;
+            return out;
+        }
+        function matrixToVector(mat, len) {
+            const out = new Array(len);
+            for (let i = 0; i < len; i++) out[i] = mat[i] || 0;
+            return out;
+        }
+        function matrixTranspose(mat, rows, cols) {
+            const out = new Float64Array(cols * rows);
+            for (let r = 0; r < rows; r++) {
+                for (let c = 0; c < cols; c++) {
+                    out[c * rows + r] = mat[r * cols + c];
+                }
+            }
+            return out;
+        }
+        function matMul(A, rowsA, colsA, B, colsB) {
+            const out = new Float64Array(rowsA * colsB);
+            for (let i = 0; i < rowsA; i++) {
+                for (let k = 0; k < colsA; k++) {
+                    const a = A[i * colsA + k];
+                    if (a === 0) continue;
+                    for (let j = 0; j < colsB; j++) {
+                        out[i * colsB + j] += a * B[k * colsB + j];
+                    }
+                }
+            }
+            return out;
+        }
+        function matrixScaleInPlace(A, scale) { for (let i = 0; i < A.length; i++) A[i] *= scale; }
+        function matrixAddInPlace(A, B) { for (let i = 0; i < A.length; i++) A[i] += B[i] || 0; }
+        function matrixLinearCombo(A, scaleA, B, scaleB) {
+            const len = Math.max(A.length, B.length);
+            const out = new Float64Array(len);
+            for (let i = 0; i < len; i++) {
+                const av = A[i] || 0;
+                const bv = B[i] || 0;
+                out[i] = scaleA * av + scaleB * bv;
+            }
+            return out;
+        }
+        function matrixFroNorm(A) { let acc = 0; for (let i = 0; i < A.length; i++) acc += A[i] * A[i]; return Math.sqrt(acc); }
+        function zeropowerNewtonSchulz(matVec, rows, cols, steps = 3) {
+            if (!rows || !cols) return Float64Array.from(matVec);
+            let r = rows, c = cols;
+            let X = Float64Array.from(matVec);
+            let transposed = false;
+            if (r > c) { X = matrixTranspose(X, r, c); const tmp = r; r = c; c = tmp; transposed = true; }
+            const normX = Math.max(1e-9, matrixFroNorm(X));
+            matrixScaleInPlace(X, 1 / normX);
+            const { a, b, c: coefC } = MUON_NS_COEFFS;
+            for (let step = 0; step < steps; step++) {
+                const Xt = matrixTranspose(X, r, c);
+                const A = matMul(X, r, c, Xt, r);
+                const AA = matMul(A, r, r, A, r);
+                const B = matrixLinearCombo(A, b, AA, coefC);
+                const BX = matMul(B, r, r, X, c);
+                matrixScaleInPlace(X, a);
+                matrixAddInPlace(X, BX);
+            }
+            if (transposed) {
+                X = matrixTranspose(X, r, c);
+                r = cols; c = rows;
+            }
+            const aspect = Math.max(1, rows / cols);
+            matrixScaleInPlace(X, Math.sqrt(aspect));
+            return X;
+        }
+        function muonOrthogonalizeVector(vec, steps = 3) {
+            if (!vec || !vec.length) return [];
+            const { rows, cols } = muonMatrixShape(vec.length);
+            const mat = vecToMatrix(vec, rows, cols);
+            const ortho = zeropowerNewtonSchulz(mat, rows, cols, steps);
+            return matrixToVector(ortho, vec.length);
+        }
+        function muonProjectGradient(grad, momentumBuf, beta = 0.95, nsSteps = 3) {
+            const n = grad.length;
+            const blend = new Array(n);
+            const betaComp = 1 - beta;
+            for (let i = 0; i < n; i++) {
+                const g = grad[i] || 0;
+                const prev = momentumBuf[i] || 0;
+                const newMom = beta * prev + betaComp * g;
+                momentumBuf[i] = newMom;
+                blend[i] = betaComp * g + beta * newMom;
+            }
+            return muonOrthogonalizeVector(blend, nsSteps);
+        }
+
+        /* -------------------- Spike visibility helpers (ND) -------------------- */
+        const HIDDEN_SOFTEN = 3.0; // widen spikes along hidden dims so slices still intersect them
+        const HIDDEN_WIDTH_BOOST = 6.0;
+        function spikeGain() { return Math.pow(Math.max(1, ND / 2), 0.7); } // boost spike intensity in higher D
+        function spikeDensityBoost() { const hidden = Math.max(0, ND - 2); if (!hidden) return 1; return 1 + 0.35 * hidden; }
+
+        /* -------------------- Spikes (ND, axis-aligned) -------------------- */
+        let SPIKE_WIDTH = 3.6; // width multiplier
+        const GAUSS_DENSITY = 48 / 240; // tuned for heavier coverage
+        const INF_DENSITY = 22 / 240;
+        const SPIKE_PAD = 1.25;
+        const MAX_SPIKE_AREA = 190;
+        const MAX_GAUSS_SPIKES = 130;
+        const MAX_INF_SPIKES = 60;
+        let gaussSpikes = []; // {c:Float64Array, a:Float64Array, amp:number}
+        let invSpikes = [];   // {c:Float64Array, a:Float64Array, scale:number, p:number}
+
+        function regenerateSpikesForDomainND() {
+            // derive a deterministic seed from domain + nonce
+            const key = `${Math.round(DOM_MIN[0] * 10)}|${Math.round(DOM_MAX[0] * 10)}|${Math.round(DOM_MIN[1] * 10)}|${Math.round(DOM_MAX[1] * 10)}|${ND}|${LANDSCAPE_NONCE}`;
+            let h = 2166136261; for (let i = 0; i < key.length; i++) { h ^= key.charCodeAt(i); h = Math.imul(h, 16777619); }
+            const localRng = mulberry32(h >>> 0);
+            function lrand(min, max) { return min + localRng() * (max - min); }
+
+            // use 2D slice area to scale counts, then boost with ND factor to keep visibility
+            const xSpan = (DOM_MAX[0] - DOM_MIN[0]) * SPIKE_PAD;
+            const ySpan = (DOM_MAX[1] - DOM_MIN[1]) * SPIKE_PAD;
+            const area = xSpan * ySpan;
+            const dimBoost = spikeDensityBoost();
+            const cappedArea = Math.min(area, MAX_SPIKE_AREA * Math.max(1, dimBoost));
+            const num_gauss = Math.min(MAX_GAUSS_SPIKES, Math.max(8, Math.round(GAUSS_DENSITY * cappedArea * dimBoost)));
+            const num_inf = Math.min(MAX_INF_SPIKES, Math.max(4, Math.round(INF_DENSITY * cappedArea * dimBoost)));
+
+            gaussSpikes = new Array(num_gauss);
+            for (let i = 0; i < num_gauss; i++) {
+                const c = new Array(ND);
+                const a = new Array(ND);
+                // ND-uniform placement across all dims (padded per-dim domain)
+                for (let d = 0; d < ND; d++) {
+                    const span_d = (DOM_MAX[d] - DOM_MIN[d]) * SPIKE_PAD;
+                    const mid_d = (DOM_MAX[d] + DOM_MIN[d]) * 0.5;
+                    const lo_d = mid_d - span_d / 2, hi_d = mid_d + span_d / 2;
+                    c[d] = lrand(lo_d, hi_d);
+                }
+                for (let d = 0; d < ND; d++) {
+                    const axisBias = (d === 1 ? 0.9 : 1.0);
+                    const hiddenBoost = (d >= 2 ? HIDDEN_WIDTH_BOOST : 1.0);
+                    a[d] = lrand(0.12, 0.6) * SPIKE_WIDTH * axisBias * hiddenBoost;
+                }
+                const amp = lrand(-0.28, 0.42);
+                gaussSpikes[i] = { c: Float64Array.from(c), a: Float64Array.from(a), amp };
+            }
+
+            invSpikes = new Array(num_inf);
+            for (let i = 0; i < num_inf; i++) {
+                const c = new Array(ND);
+                const a = new Array(ND);
+                // ND-uniform placement across all dims (padded per-dim domain)
+                for (let d = 0; d < ND; d++) {
+                    const span_d = (DOM_MAX[d] - DOM_MIN[d]) * SPIKE_PAD;
+                    const mid_d = (DOM_MAX[d] + DOM_MIN[d]) * 0.5;
+                    const lo_d = mid_d - span_d / 2, hi_d = mid_d + span_d / 2;
+                    c[d] = lrand(lo_d, hi_d);
+                }
+                for (let d = 0; d < ND; d++) {
+                    const hiddenBoost = (d >= 2 ? HIDDEN_WIDTH_BOOST : 1.0);
+                    a[d] = lrand(0.10, 0.9) * SPIKE_WIDTH * hiddenBoost;
+                }
+                const scale = lrand(0.2, 0.7);
+                const p = lrand(1.6, 2.8);
+                invSpikes[i] = { c: Float64Array.from(c), a: Float64Array.from(a), scale, p };
+            }
+        }
+
+        /* -------------------- Terrain functions (ND) -------------------- */
+        const EPS = 1e-4;
+        function fourier_noise_nd(x) {
+            let val = 0.0;
+            for (const b of fbasis) {
+                val += b.amp * Math.sin(dot(b.k1, x) + b.p1)
+                    + 0.7 * b.amp * Math.cos(dot(b.k2, x) + b.p2);
+            }
+            return 0.85 * val;
+        }
+        function finite_spikes_nd(x) {
+            let S = 0.0; const gain = spikeGain();
+            for (const s of gaussSpikes) {
+                let quad = 0.0; for (let d = 0; d < ND; d++) { const widen = (d >= 2 ? HIDDEN_SOFTEN : 1.0); const u = (x[d] - s.c[d]) / ((s.a[d] * widen) + 1e-6); quad += u * u; }
+                S += s.amp * Math.exp(-0.5 * quad);
+            }
+            return 0.35 * S * gain;
+        }
+        function infinite_spikes_nd(x) {
+            let S = 0.0; const gain = spikeGain();
+            for (const s of invSpikes) {
+                let denom = 0.0; for (let d = 0; d < ND; d++) { const widen = (d >= 2 ? HIDDEN_SOFTEN : 1.0); const u = Math.abs((x[d] - s.c[d]) / ((s.a[d] * widen) + 1e-6)); denom += Math.pow(u, s.p); }
+                S += (s.scale * gain) / (denom + EPS);
+            }
+            return S;
+        }
+        function rabs(v, tau) { return Math.sqrt(v * v + tau * tau) - tau; }
+        const INTERP_BETA = 0.20;
+        let loss_nd = null;
+        function radialSqAboutCenter(x) {
+            const dx0 = (x[0] || 0) - x_center;
+            const dx1 = (ND > 1 ? (x[1] || 0) : 0) - y_center;
+            let radialSq = dx0 * dx0 + dx1 * dx1;
+            for (let d = 2; d < ND; d++) {
+                const xd = (x[d] || 0);
+                radialSq += xd * xd;
+            }
+            return radialSq;
+        }
+        function rebuildFullLossND() {
+            loss_nd = function (x) {
+                const baseVal = base_loss_nd(x);
+                const radialSq = radialSqAboutCenter(x);
+                const log_sink = LOG_DENT_W * Math.log1p(0.5 * Math.sqrt(radialSq));
+                const radial = rabs(Math.sqrt(radialSq), 2);
+                return (1 - INTERP_BETA) * (baseVal + log_sink) + INTERP_BETA * radial;
+            };
+        }
+
+        // BASE loss (for true minima placement)
+        function base_loss_nd(x) {
+            const X0 = (x[0] || 0) - x_center;
+            const X1 = (ND > 1 ? (x[1] || 0) : 0) - y_center;
+            let bowl = 0.0;
+            const a0 = (ANIS[0] || 1.0) * X0; bowl += a0 * a0;
+            if (ND > 1) { const a1 = (ANIS[1] || 1.0) * X1; bowl += a1 * a1; }
+            for (let d = 2; d < ND; d++) { const xd = (x[d] || 0); const ad = (ANIS[d] || 1.0) * xd; bowl += ad * ad; }
+            bowl *= 0.05;
+            const ripples = 0.16 * (0.8 * Math.sin(1.4 * X0 + 0.5 * X1) + 0.6 * Math.cos(2.2 * X1 - 0.3 * X0));
+            const texture = fourier_noise_nd(x);
+            let radialSq = X0 * X0 + X1 * X1;
+            for (let d = 2; d < ND; d++) { const xd = (x[d] || 0); radialSq += xd * xd; }
+            const bumps = 0.06 * Math.sin(0.45 * Math.sqrt(radialSq + 1.0));
+            const spikes = finite_spikes_nd(x) + infinite_spikes_nd(x);
+            return bowl + ripples + bumps + texture + spikes;
+        }
+
+        let gradScratchPlus = null, gradScratchMinus = null;
+        function ensureGradScratch(n) {
+            if (!gradScratchPlus || gradScratchPlus.length !== n) gradScratchPlus = new Float64Array(n);
+            if (!gradScratchMinus || gradScratchMinus.length !== n) gradScratchMinus = new Float64Array(n);
+        }
+        function grad_nd(x, f, h = GRAD_H) {
+            const n = x.length; const g = new Array(n);
+            ensureGradScratch(n);
+            const xp = gradScratchPlus; const xm = gradScratchMinus;
+            for (let i = 0; i < n; i++) { const val = x[i] || 0; xp[i] = val; xm[i] = val; }
+            const denom = 2 * h;
+            for (let d = 0; d < n; d++) {
+                const base = x[d] || 0;
+                xp[d] = base + h;
+                xm[d] = base - h;
+                g[d] = (f(xp) - f(xm)) / denom;
+                xp[d] = base;
+                xm[d] = base;
+            }
+            return g;
+        }
+        function grad_full(x) { return grad_nd(x, loss_nd); }
+        function grad_base(x) { return grad_nd(x, base_loss_nd); }
+
+        // gradient at a noisy observed location
+        function grad_observed_nd(pos) {
+            const noise = randnN(effectiveNoiseStd(), ND);
+            const obs = add(pos, noise);
+            return grad_full(obs);
+        }
+
+        /* -------------------- Grid & Contour (2D slice) -------------------- */
+        let { X_MIN, X_MAX, NX, Y_MIN, Y_MAX, NY } = OUT_DOMAIN;
+        let viewCenterX = (OUT_DOMAIN.X_MIN + OUT_DOMAIN.X_MAX) * 0.5;
+        let viewCenterY = (OUT_DOMAIN.Y_MIN + OUT_DOMAIN.Y_MAX) * 0.5;
+        let viewSpanX = OUT_DOMAIN.X_MAX - OUT_DOMAIN.X_MIN;
+        let viewSpanY = OUT_DOMAIN.Y_MAX - OUT_DOMAIN.Y_MIN;
+        function linspace(count, min, max, target = null) {
+            if (count <= 0) return [];
+            const span = max - min;
+            const arr = (target && target.length === count) ? target : new Float64Array(count);
+            if (count === 1) { arr[0] = min; return arr; }
+            const step = span / Math.max(1, count - 1);
+            for (let i = 0; i < count; i++) arr[i] = min + step * i;
+            return arr;
+        }
+        let xs = linspace(NX, X_MIN, X_MAX);
+        let ys = linspace(NY, Y_MIN, Y_MAX);
+
+        // cache for 2D contours (static in 2D)
+        let contourCache2D = { Zc: null, xs: null, ys: null, lo: null, hi: null, bias: null, valid: false };
+        function invalidateContourCache() { contourCache2D.valid = false; }
+        let contourFrameTicker = 0;
+        function contourUpdateStride() { return 1; }
+        function resetContourTicker() { contourFrameTicker = 0; }
+
+        function setDomain(xmin, xmax, ymin, ymax, opts = {}) {
+            const { rebuildLandscape = true } = opts;
+            X_MIN = xmin; X_MAX = xmax; Y_MIN = ymin; Y_MAX = ymax;
+            viewCenterX = (xmin + xmax) * 0.5;
+            viewCenterY = (ymin + ymax) * 0.5;
+            viewSpanX = Math.max(1e-6, xmax - xmin);
+            viewSpanY = Math.max(1e-6, ymax - ymin);
+            xs = linspace(NX, X_MIN, X_MAX, xs);
+            ys = linspace(NY, Y_MIN, Y_MAX, ys);
+            if (rebuildLandscape) {
+                x_center = X_MIN + 0.2 * (X_MAX - X_MIN);
+                y_center = (Y_MIN + Y_MAX) / 2;
+            }
+            DOM_MIN = new Array(ND); DOM_MAX = new Array(ND);
+            for (let d = 0; d < ND; d++) {
+                if (d === 0) { DOM_MIN[d] = X_MIN; DOM_MAX[d] = X_MAX; }
+                else if (d === 1) { DOM_MIN[d] = Y_MIN; DOM_MAX[d] = Y_MAX; }
+                else { const span = Math.max(X_MAX - X_MIN, Y_MAX - Y_MIN); DOM_MIN[d] = -0.5 * span; DOM_MAX[d] = 0.5 * span; }
+            }
+            if (rebuildLandscape) { regenerateSpikesForDomainND(); }
+            invalidateContourCache();
+            markColourStatsDirty();
+            refreshHiddenStart(rebuildLandscape);
+            ensureStartInView();
+            resetContourTicker();
+        }
+        const UNITS_PER_PX = 0.02;
+        function isDisplayed(el) { if (!el) return false; const rect = el.getBoundingClientRect(); return el.isConnected && rect.width > 0 && rect.height > 0; }
+        function fitDomainToContainer(opts = {}) {
+            const { rebuildLandscape = false } = opts;
+            const rect = elChart.getBoundingClientRect();
+            const W = Math.max(1, rect.width);
+            const H = Math.max(1, rect.height);
+            const xSpan = W * UNITS_PER_PX;
+            const ySpan = H * UNITS_PER_PX;
+            const cx = viewCenterX;
+            const cy = viewCenterY;
+            setDomain(cx - xSpan / 2, cx + xSpan / 2, cy - ySpan / 2, cy + ySpan / 2, { rebuildLandscape });
+        }
+
+        function ensureStartInView({ forceCenter = false, notify = true } = {}) {
+            const spanX = Math.max(1e-6, X_MAX - X_MIN);
+            const spanY = Math.max(1e-6, Y_MAX - Y_MIN);
+            const padX = Math.min(spanX * 0.45, Math.max(1e-3, spanX * 0.02));
+            const padY = Math.min(spanY * 0.45, Math.max(1e-3, spanY * 0.02));
+            let nextX = Number.isFinite(START[0]) ? START[0] : viewCenterX;
+            let nextY = Number.isFinite(START[1]) ? START[1] : viewCenterY;
+            if (forceCenter) { nextX = viewCenterX; nextY = viewCenterY; }
+            nextX = clamp(nextX, X_MIN + padX, X_MAX - padX);
+            nextY = clamp(nextY, Y_MIN + padY, Y_MAX - padY);
+            if (nextX !== START[0] || nextY !== START[1]) {
+                START[0] = nextX; START[1] = nextY;
+                if (notify && chartGD) updateStartMarker();
+                return true;
+            }
+            return false;
+        }
+
+        function safePos(sel) { const p = positions && positions[sel]; return (p && Array.isArray(p)) ? p : startVector(); }
+
+        function effectiveGridSizes() {
+            if (ND === 2) return { nx: NX, ny: NY };
+            if (ND === 3) return { nx: Math.max(64, Math.round(NX * 0.55)), ny: Math.max(48, Math.round(NY * 0.55)) };
+            if (ND === 4) return { nx: Math.max(56, Math.round(NX * 0.45)), ny: Math.max(40, Math.round(NY * 0.45)) };
+            return { nx: Math.max(48, Math.round(NX * 0.38)), ny: Math.max(34, Math.round(NY * 0.38)) };
+        }
+
+        let adaptiveXs = null, adaptiveYs = null, contourVecScratch = null;
+        function ensureContourVec() {
+            if (!contourVecScratch || contourVecScratch.length !== ND) contourVecScratch = new Float64Array(ND);
+            return contourVecScratch;
+        }
+        function computeZPack(selected) {
+            const baseVec = safePos(selected);
+            const { nx, ny } = effectiveGridSizes();
+            adaptiveXs = linspace(nx, X_MIN, X_MAX, (adaptiveXs && adaptiveXs.length === nx) ? adaptiveXs : null);
+            adaptiveYs = linspace(ny, Y_MIN, Y_MAX, (adaptiveYs && adaptiveYs.length === ny) ? adaptiveYs : null);
+            const vec = ensureContourVec();
+            vec[0] = 0; if (ND > 1) vec[1] = 0;
+            for (let d = 2; d < ND; d++) vec[d] = baseVec[d] || 0;
+            const Z = new Array(ny);
+            for (let j = 0; j < ny; j++) {
+                if (ND > 1) vec[1] = adaptiveYs[j];
+                const row = new Float64Array(nx);
+                for (let i = 0; i < nx; i++) {
+                    vec[0] = adaptiveXs[i];
+                    row[i] = loss_nd(vec);
+                }
+                Z[j] = row;
+            }
+            return { Z, xsL: adaptiveXs, ysL: adaptiveYs };
+        }
+
+        function percentile(arr, p) { const c = arr.slice().sort((a, b) => a - b); const idx = Math.min(c.length - 1, Math.max(0, Math.floor((p / 100) * c.length))); return c[idx]; }
+        const COLOR_LOG_BIAS = 0.0;
+        const DEFAULT_COLOUR_FLOOR = -1.0;
+        const COLOR_BIAS_MARGIN = 4.0;
+        function transformForColour(Z, biasOverride = null) {
+            let minV = Infinity; for (const row of Z) { for (const v of row) { if (v < minV) minV = v; } }
+            let bias = (biasOverride == null) ? COLOR_LOG_BIAS : biasOverride;
+            if (minV + bias <= 1e-6) { bias = -minV + 1.0; }
+            const Zc = Z.map(row => row.map(v => Math.sqrt(v + bias) + v));
+            return { Zc, bias };
+        }
+
+        const COLOUR_SAMPLE_BASE = 800;
+        const COLOUR_SAMPLE_STEP = 220;
+        let colourStats = { bias: COLOR_LOG_BIAS, lo: null, hi: null, ready: false };
+        function markColourStatsDirty() { colourStats.ready = false; }
+        function colourSampleCount() { return COLOUR_SAMPLE_BASE + COLOUR_SAMPLE_STEP * Math.max(0, ND - 2); }
+        function rebuildColourStats({ sampleCount = colourSampleCount(), minBias = COLOR_LOG_BIAS } = {}) {
+            const key = `${Math.round(DOM_MIN[0] * 10)}|${Math.round(DOM_MAX[0] * 10)}|${Math.round(DOM_MIN[1] * 10)}|${Math.round(DOM_MAX[1] * 10)}|${ND}|${LANDSCAPE_NONCE}|colour`;
+            let h = 2166136261; for (let i = 0; i < key.length; i++) { h ^= key.charCodeAt(i); h = Math.imul(h, 16777619); }
+            const localRng = mulberry32(h >>> 0);
+            function localPoint() { const v = new Array(ND); for (let d = 0; d < ND; d++) { v[d] = DOM_MIN[d] + localRng() * (DOM_MAX[d] - DOM_MIN[d]); } return v; }
+            const samples = new Array(sampleCount);
+            let minV = Infinity;
+            for (let i = 0; i < sampleCount; i++) {
+                const vec = localPoint();
+                const val = loss_nd(vec);
+                samples[i] = val;
+                if (val < minV) minV = val;
+            }
+            let bias = Math.max(COLOR_LOG_BIAS, minBias, -minV + COLOR_BIAS_MARGIN);
+            const transformed = samples.map(v => Math.sqrt(v + bias) + v);
+            const floors = [];
+            const defaultTransFloor = Math.sqrt(Math.max(1e-9, DEFAULT_COLOUR_FLOOR + bias)) + DEFAULT_COLOUR_FLOOR;
+            floors.push(defaultTransFloor);
+            const mcFloor = Number.isFinite(starLossValue) ? Math.max(0, starLossValue - 1) : null;
+            if (mcFloor != null) { floors.push(Math.sqrt(Math.max(1e-9, mcFloor + bias)) + mcFloor); }
+            const lo = Math.min(percentile(transformed, 0), ...floors);
+            const hi = Math.max(lo + 1e-6, percentile(transformed, 75));
+            colourStats = { bias, lo, hi, ready: true };
+        }
+        function ensureColourStats(minBias = COLOR_LOG_BIAS) {
+            if (!colourStats.ready || colourStats.bias + 1e-6 < minBias) rebuildColourStats({ minBias });
+            return colourStats;
+        }
+
+        function buildContourPack() {
+            let stats = ensureColourStats();
+            const loForStats = (st) => {
+                const defaultFloorTrans = Math.sqrt(Math.max(1e-9, DEFAULT_COLOUR_FLOOR + st.bias)) + DEFAULT_COLOUR_FLOOR;
+                const mcFloorRaw = Number.isFinite(starLossValue) ? Math.max(0, starLossValue - 1) : null;
+                const mcFloorTrans = (mcFloorRaw != null) ? Math.sqrt(Math.max(1e-9, mcFloorRaw + st.bias)) + mcFloorRaw : null;
+                let lo = Math.min(st.lo, defaultFloorTrans);
+                if (mcFloorTrans != null) lo = Math.min(lo, mcFloorTrans);
+                return lo;
+            };
+            if (ND === 2 && contourCache2D.valid && Math.abs((contourCache2D.bias || 0) - stats.bias) < 1e-6) {
+                contourCache2D.lo = loForStats(stats);
+                contourCache2D.hi = Math.max(stats.lo + 1e-6, stats.hi);
+                return contourCache2D;
+            }
+            if (ND === 2) invalidateContourCache();
+            const { Z, xsL, ysL } = computeZPack(selectedOpt);
+            let { Zc, bias: biasUsed } = transformForColour(Z, stats.bias);
+            if (biasUsed - stats.bias > 1e-6) {
+                stats = ensureColourStats(biasUsed + 0.5);
+                ({ Zc } = transformForColour(Z, stats.bias));
+            }
+            const lo = loForStats(stats);
+            const hi = Math.max(stats.lo + 1e-6, stats.hi);
+            const pack = { Zc, xs: xsL, ys: ysL, lo, hi, bias: stats.bias, valid: true };
+            if (ND === 2) { contourCache2D = pack; }
+            return pack;
+        }
+
+        /* -------------------- Optimizers (ND) -------------------- */
+        class Optimizer { constructor(name) { this.name = name; this.lr = 0.2; } step(pos, g) { throw "override"; } }
+        class SGD extends Optimizer { step(pos, g) { const upd = scale(g, this.lr); return sub(pos, upd); } }
+        class Momentum extends Optimizer { constructor(lr, beta = 0.9) { super("Momentum"); this.lr = lr; this.beta = beta; this.v = zeros(ND); } step(pos, g) { this.v = add(scale(this.v, this.beta), scale(g, 1 - this.beta)); return sub(pos, scale(this.v, this.lr)); } }
+        class RMSProp extends Optimizer { constructor(lr, beta = 0.9, eps = 1e-8) { super("RMSProp"); this.lr = lr; this.beta = beta; this.eps = eps; this.s = zeros(ND); } step(pos, g) { const stepv = new Array(ND); for (let d = 0; d < ND; d++) { this.s[d] = this.beta * this.s[d] + (1 - this.beta) * g[d] * g[d]; stepv[d] = this.lr * g[d] / Math.sqrt(this.s[d] + this.eps); } return sub(pos, stepv); } }
+        class Adam extends Optimizer { constructor(lr, b1 = 0.9, b2 = 0.999, eps = 1e-8) { super("Adam"); this.lr = lr; this.b1 = b1; this.b2 = b2; this.eps = eps; this.m = zeros(ND); this.v = zeros(ND); this.t = 0; } step(pos, g) { this.t += 1; const stepv = new Array(ND); for (let d = 0; d < ND; d++) { this.m[d] = this.b1 * this.m[d] + (1 - this.b1) * g[d]; this.v[d] = this.b2 * this.v[d] + (1 - this.b2) * g[d] * g[d]; const mhat = this.m[d] / (1 - Math.pow(this.b1, this.t)); const vhat = this.v[d] / (1 - Math.pow(this.b2, this.t)); stepv[d] = this.lr * mhat / (Math.sqrt(vhat) + this.eps); } return sub(pos, stepv); } }
+        class AdamW extends Optimizer { constructor(lr, b1 = 0.9, b2 = 0.999, eps = 1e-8, weight_decay = 0.01) { super("AdamW"); this.lr = lr; this.b1 = b1; this.b2 = b2; this.eps = eps; this.m = zeros(ND); this.v = zeros(ND); this.t = 0; this.wd = weight_decay; } step(pos, g) { this.t += 1; const stepv = new Array(ND); for (let d = 0; d < ND; d++) { this.m[d] = this.b1 * this.m[d] + (1 - this.b1) * g[d]; this.v[d] = this.b2 * this.v[d] + (1 - this.b2) * g[d] * g[d]; const mhat = this.m[d] / (1 - Math.pow(this.b1, this.t)); const vhat = this.v[d] / (1 - Math.pow(this.b2, this.t)); stepv[d] = this.lr * (mhat / (Math.sqrt(vhat) + this.eps) + this.wd * pos[d]); } return sub(pos, stepv); } }
+        class Muon extends Optimizer {
+            constructor(lr, beta = 0.95, nsSteps = 4, weight_decay = 0.01) {
+                super("Muon"); this.lr = lr; this.beta = beta; this.nsSteps = nsSteps; this.wd = weight_decay; this.m = zeros(ND);
+            }
+            ensureBuf() { if (!this.m || this.m.length !== ND) this.m = zeros(ND); }
+            step(pos, g) {
+                this.ensureBuf();
+                const update = muonProjectGradient(g, this.m, this.beta, this.nsSteps);
+                const next = new Array(ND);
+                for (let d = 0; d < ND; d++) {
+                    const wdTerm = this.wd * (pos[d] || 0);
+                    next[d] = (pos[d] || 0) - this.lr * (update[d] + wdTerm);
+                }
+                return next;
+            }
+        }
+
+        /* -------------------- Simulation State -------------------- */
+        const OPT_ORDER = ["SGD", "Momentum", "RMSProp", "Adam", "AdamW", "Muon"];
+        function optimizerTraceIndex(name) {
+            const idx = OPT_ORDER.indexOf(name);
+            if (idx < 0) return { line: -1, point: -1 };
+            const base = 3 + idx * 2;
+            return { line: base, point: base + 1 };
+        }
+        function optimizerLineIndices() { return OPT_ORDER.map((_, idx) => 3 + idx * 2); }
+        function optimizerPointIndices() { return OPT_ORDER.map((_, idx) => 4 + idx * 2); }
+        let hiddenStart = [];
+        function refreshHiddenStart(randomize = false) {
+            const needed = Math.max(0, ND - 2);
+            if (randomize || hiddenStart.length !== needed) {
+                hiddenStart = new Array(needed);
+                for (let d = 2; d < ND; d++) {
+                    const span = (DOM_MAX[d] - DOM_MIN[d]) || 1;
+                    hiddenStart[d - 2] = DOM_MIN[d] + rng() * span;
+                }
+                return;
+            }
+            for (let d = 2; d < ND; d++) {
+                const lo = DOM_MIN[d], hi = DOM_MAX[d];
+                const span = hi - lo;
+                let v = hiddenStart[d - 2];
+                if (!Number.isFinite(v) || span <= 0) v = lo;
+                if (v < lo || v > hi) v = lo + rng() * span;
+                hiddenStart[d - 2] = v;
+            }
+        }
+        let optimizers = {}; let positions = {}; let trails = {}; let bestLossByOpt = {}; // trails store projected XY for plotting
+        let selectedOpt = "SGD";
+
+        function startVector() {
+            const v = new Array(ND).fill(0);
+            v[0] = START[0]; if (ND > 1) v[1] = START[1];
+            for (let d = 2; d < ND; d++) v[d] = hiddenStart[d - 2] || 0;
+            return v;
+        }
+        function initOptimizers() {
+            optimizers = { "SGD": new SGD(LR_SGD), "Momentum": new Momentum(LR_MOM), "RMSProp": new RMSProp(LR_RMS), "Adam": new Adam(LR_ADAM), "AdamW": new AdamW(LR_ADAMW), "Muon": new Muon(LR_MUON) };
+            positions = {}; trails = {}; bestLossByOpt = {};
+            for (const name of OPT_ORDER) {
+                positions[name] = startVector();
+                trails[name] = [[positions[name][0], positions[name][1] || 0]];
+                bestLossByOpt[name] = Number.POSITIVE_INFINITY;
+            }
+        }
+
+        // Ensure star_vec exists BEFORE any function assigns to it
+        let star_vec = startVector();
+        let starLossValue = null;
+
+        /* -------------------- Plotly Setup (EXECUTION ORDER FIXED) -------------------- */
+        const colors = { "SGD": "#1f77b4", "Momentum": "#ff7f0e", "RMSProp": "#2ca02c", "Adam": "#d62728", "AdamW": "#9467bd", "Muon": "#8c564b" };
+        let frameIdx = 0, msPerFrame = 30;
+        let loopRunning = false;
+        let rafHandle = null;
+        let loopAccumulator = 0;
+        let lastLoopTs = null;
+        const elChart = document.getElementById('chart');
+        const elStepCount = document.getElementById('stepCount');
+        const elStepMax = document.getElementById('stepMax');
+        const lossPlotEl = document.getElementById('lossPlot');
+        elStepMax.textContent = T.toString();
+
+        // 1) Seed & domain BEFORE we build traces
+        reseedBaseWithSeed(landscapeSeed);
+        fitDomainToContainer({ rebuildLandscape: true });
+        refreshHiddenStart(true);
+        initOptimizers();
+        const initialLoss = refineStarWithGlobal();
+        resetLossPlot(initialLoss);
+
+        // colorscale helpers
+        function hsvToRgb(h, s, v) { let c = v * s, x = c * (1 - Math.abs(((h / 60) % 2) - 1)), m = v - c; let r = 0, g = 0, b = 0; if (0 <= h && h < 60) { r = c; g = x; b = 0; } else if (60 <= h && h < 120) { r = x; g = c; b = 0; } else if (120 <= h && h < 180) { r = 0; g = c; b = x; } else if (180 <= h && h < 240) { r = 0; g = x; b = c; } else if (240 <= h && h < 300) { r = x; g = 0; b = c; } else { r = c; g = 0; b = x; } return [Math.round((r + m) * 255), Math.round((g + m) * 255), Math.round((b + m) * 255)]; }
+        function toHex(rgb) { const [r, g, b] = rgb; const h = (n) => n.toString(16).padStart(2, '0'); return `#${h(r)}${h(g)}${h(b)}`; }
+        function buildSteppedColorscale(steps) { const n = Math.max(1, steps); const cs = []; for (let k = 0; k < n; k++) { const t0 = k / n, t1 = (k + 1) / n; const hue = 260 - 240 * (k / (n - 1 || 1)); const col = toHex(hsvToRgb(hue, 0.85, 0.95)); cs.push([t0, col]); cs.push([Math.min(0.999999, t1), col]); } return cs; }
+        function contourLevelsForND() {
+            if (ND === 2) return CONTOUR_LEVELS;
+            if (ND === 3) return Math.max(16, Math.round(CONTOUR_LEVELS * 0.7));
+            if (ND === 4) return Math.max(14, Math.round(CONTOUR_LEVELS * 0.55));
+            return Math.max(12, Math.round(CONTOUR_LEVELS * 0.45));
+        }
+
+        let contPack = buildContourPack();
+        let Zc = contPack.Zc; let xs_local = contPack.xs; let ys_local = contPack.ys; let clo = contPack.lo; let chi = contPack.hi;
+
+        const INITIAL_LEVELS = contourLevelsForND();
+        const STEPPED_CS = buildSteppedColorscale(INITIAL_LEVELS);
+        const contourSpan = Math.max(1e-6, chi - clo);
+        const contour = {
+            type: 'contour', z: Zc, x: xs_local, y: ys_local,
+            contours: { coloring: 'fill', showlines: true, start: clo, end: chi, size: contourSpan / Math.max(1, INITIAL_LEVELS) },
+            colorscale: STEPPED_CS, zmin: clo, zmax: chi, zauto: false, autocolorscale: false,
+            line: { width: 0.7 }, showscale: false, name: 'loss', visible: true
+        };
+        const startMarker = { type: 'scatter', mode: 'markers', x: [START[0]], y: [START[1]], marker: { symbol: 'square', size: 8, color: '#ddd' }, name: 'start', hoverinfo: 'skip', visible: true };
+        const optMarker = { type: 'scatter', mode: 'markers', x: [star_vec[0]], y: [star_vec[1] || 0], marker: { symbol: 'star', size: 12, color: '#fff' }, name: 'optimum', hoverinfo: 'skip', visible: true };
+        function lineTrace(name) { return { type: 'scatter', mode: 'lines', x: [positions[name][0]], y: [positions[name][1] || 0], line: { width: 2, color: colors[name], simplify: false }, name: name + ' path', visible: name === selectedOpt }; }
+        function pointTrace(name) { return { type: 'scatter', mode: 'markers', x: [positions[name][0]], y: [positions[name][1] || 0], marker: { size: 6, color: colors[name] }, name: name, visible: name === selectedOpt }; }
+
+        const traces = [contour, startMarker, optMarker];
+        for (const name of OPT_ORDER) {
+            traces.push(lineTrace(name), pointTrace(name));
+        }
+
+        const layout = {
+            paper_bgcolor: '#0b0c10', plot_bgcolor: '#0b0c10', margin: { l: 20, r: 10, t: 10, b: 30 },
+            xaxis: { title: 'x', gridcolor: '#223', zerolinecolor: '#223', automargin: true, autorange: true },
+            yaxis: { title: 'y', gridcolor: '#223', zerolinecolor: '#223', automargin: true, autorange: true },
+            legend: { bgcolor: '#12131a', bordercolor: '#223', borderwidth: 1, font: { color: '#e6eef7' } }
+        };
+
+        Plotly.newPlot(elChart, traces, layout, { responsive: true, displaylogo: false }).then((gd) => {
+            chartGD = gd; safeResize();
+            const onResize = debounce(() => { if (!chartGD) return; fitDomainToContainer(); refreshContour(); safeResize(); }, 100);
+            window.addEventListener('resize', onResize);
+            const ro = new ResizeObserver(() => onResize()); try { ro.observe(elChart); } catch (e) { }
+            document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') safeResize(); });
+            // run diagnostics after plot is ready
+        });
+
+        function safeResize() { if (!chartGD) return; if (!isDisplayed(elChart)) return; if (!chartGD._fullLayout) return; try { Plotly.Plots.resize(chartGD); } catch (e) { } }
+        function debounce(fn, ms) { let t = null; return (...args) => { clearTimeout(t); t = setTimeout(() => fn.apply(null, args), ms); } }
+
+        function setStart(x, y) {
+            stopTimer(); START[0] = x; START[1] = y; frameIdx = 0; elStepCount.textContent = "0";
+            refreshHiddenStart(false); // keep hidden dims stable within domain
+            initOptimizers();
+            const lineIndices = optimizerLineIndices(); const ptIndices = optimizerPointIndices();
+            const lineXs = OPT_ORDER.map(n => [positions[n][0]]); const lineYs = OPT_ORDER.map(n => [positions[n][1] || 0]);
+            Plotly.restyle(elChart, { x: lineXs, y: lineYs }, lineIndices);
+            const ptXs = OPT_ORDER.map(n => [positions[n][0]]); const ptYs = OPT_ORDER.map(n => [positions[n][1] || 0]);
+            Plotly.restyle(elChart, { x: ptXs, y: ptYs }, ptIndices);
+            updateStartMarker(); // move start marker
+            const curLoss = updateLegendLosses();
+            resetLossPlot(curLoss);
+            // contours unchanged in 2D; ND>2 will recompute inside refreshContour
+            refreshContour();
+        }
+
+        elChart.on('plotly_click', (ev) => { const p = ev && ev.points && ev.points[0]; if (!p) return; setStart(p.x, p.y); });
+
+        function refreshContour() {
+            // Use cached pack in 2D; recompute for ND>2
+            contPack = buildContourPack();
+            const levels = Math.max(1, contourLevelsForND());
+            const span = Math.max(1e-6, contPack.hi - contPack.lo);
+            const size = span / levels;
+            const cs = buildSteppedColorscale(levels);
+            Plotly.restyle(elChart, {
+                z: [contPack.Zc], x: [contPack.xs], y: [contPack.ys], zmin: [contPack.lo], zmax: [contPack.hi],
+                zauto: [false], autocolorscale: [false],
+                'contours.start': [contPack.lo], 'contours.end': [contPack.hi], 'contours.size': [size], 'contours.coloring': ['fill'],
+                colorscale: [cs]
+            }, [0]);
+            updateStarMarker();
+            Plotly.relayout(elChart, { 'xaxis.autorange': true, 'yaxis.autorange': true });
+            resetContourTicker();
+        }
+
+        function updateStartMarker() { if (!chartGD) return; Plotly.restyle(elChart, { x: [[START[0]]], y: [[START[1] || 0]] }, [1]); }
+        function updateStarMarker() {
+            if (!chartGD || !Array.isArray(star_vec)) return;
+            Plotly.restyle(elChart, { x: [[star_vec[0]]], y: [[star_vec[1] || 0]] }, [2]);
+        }
+
+        function alignLandscapeCenterToStar() {
+            if (!Array.isArray(star_vec)) return;
+            const nx = Number(star_vec[0]) || 0;
+            const ny = (ND > 1) ? (Number(star_vec[1]) || 0) : 0;
+            if (Math.abs(nx - x_center) < 1e-9 && Math.abs(ny - y_center) < 1e-9) return;
+            x_center = nx;
+            y_center = ny;
+            invalidateContourCache();
+            markColourStatsDirty();
+        }
+
+        function adoptLiveBest(pos, loss, { recenterView = false } = {}) {
+            if (!pos || !Number.isFinite(loss)) return;
+            star_vec = pos.slice();
+            starLossValue = loss;
+            updateStarMarker();
+            if (recenterView) centerViewOnStar();
+            if (ND === 2) refreshContour();
+        }
+
+        function formatLossValue(v) { return Number.isFinite(v) ? v.toFixed(3) : '--'; }
+        function updateLegendLosses() {
+            const pos = safePos(selectedOpt);
+            const curLoss = (pos && pos.length === ND && typeof loss_nd === 'function') ? loss_nd(pos) : NaN;
+            if (Number.isFinite(curLoss)) {
+                const prev = Number.isFinite(bestLossByOpt[selectedOpt]) ? bestLossByOpt[selectedOpt] : Number.POSITIVE_INFINITY;
+                if (curLoss < prev) bestLossByOpt[selectedOpt] = curLoss;
+                if (!Number.isFinite(starLossValue) || curLoss + 1e-9 < starLossValue) {
+                    adoptLiveBest(pos, curLoss);
+                }
+            }
+            if (legendStarLossEl) legendStarLossEl.textContent = formatLossValue(starLossValue);
+            if (legendOptBestEl) {
+                const bestVal = bestLossByOpt[selectedOpt];
+                legendOptBestEl.textContent = formatLossValue(bestVal);
+            }
+            if (legendOptLossEl) legendOptLossEl.textContent = formatLossValue(curLoss);
+            return curLoss;
+        }
+
+        /* -------------------- Loss sparkline -------------------- */
+        function initLossPlot() {
+            if (!lossPlotEl || lossPlotInitialized) return;
+            const lossTrace = {
+                type: 'scatter',
+                mode: 'lines',
+                x: [],
+                y: [],
+                line: { color: '#6aa2ff', width: 2 },
+                hoverinfo: 'skip'
+            };
+            const lossLayout = {
+                paper_bgcolor: '#12131a',
+                plot_bgcolor: '#0b0c10',
+                margin: { l: 32, r: 8, t: 8, b: 44 },
+                height: 140,
+                showlegend: false,
+                xaxis: {
+                    title: { text: 'Optimizer Steps', standoff: 18 },
+                    color: '#b7c4d9',
+                    gridcolor: '#1d2332',
+                    zeroline: false,
+                    tickfont: { size: 10 },
+                    range: [0, T],
+                    automargin: true
+                },
+                yaxis: {
+                    title: 'Loss Value',
+                    color: '#b7c4d9',
+                    gridcolor: '#1d2332',
+                    zeroline: true,
+                    zerolinecolor: '#2d3446',
+                    tickfont: { size: 10 },
+                    range: lossPlotRangeBounds()
+                }
+            };
+            Plotly.newPlot(lossPlotEl, [lossTrace], lossLayout, { displayModeBar: false, responsive: true });
+            lossPlotInitialized = true;
+        }
+        function lossPlotMaxPoints() { return Math.max(1, T); }
+        function resetLossPlot(seedLoss = null) {
+            initLossPlot();
+            if (!lossPlotEl || !lossPlotInitialized) return;
+            Plotly.restyle(lossPlotEl, { x: [[]], y: [[]] });
+            Plotly.relayout(lossPlotEl, { 'xaxis.range': [0, T], 'yaxis.range': lossPlotRangeBounds() });
+            lossHistory = [];
+            if (Number.isFinite(seedLoss)) appendLossPoint(0, seedLoss);
+        }
+        function appendLossPoint(step, loss) {
+            if (!lossPlotEl || !Number.isFinite(loss)) return;
+            initLossPlot();
+            if (!lossPlotInitialized) return;
+            Plotly.extendTraces(lossPlotEl, { x: [[step]], y: [[loss]] }, [0], lossPlotMaxPoints());
+            lossHistory.push(loss);
+            if (lossHistory.length > LOSS_WINDOW) lossHistory.shift();
+            applyLossPlotRange();
+        }
+        function lossPlotRangeBounds() {
+            const historyMin = lossHistory.length ? Math.min(...lossHistory) : null;
+            const historyMax = lossHistory.length ? Math.max(...lossHistory) : null;
+            const minBase = Number.isFinite(starLossValue) ? starLossValue : 0;
+            const min = historyMin !== null ? historyMin : minBase;
+            const maxBase = LOSS_Y_MAX;
+            const maxCandidate = historyMax !== null ? historyMax : maxBase;
+            const max = Math.max(maxCandidate, min + 1e-3);
+            return [min, max];
+        }
+        function applyLossPlotRange() {
+            if (!lossPlotEl || !lossPlotInitialized) return;
+            const [min, max] = lossPlotRangeBounds();
+            Plotly.relayout(lossPlotEl, { 'yaxis.range': [min, max] });
+        }
+
+        function centerViewOnStar(opts = {}) {
+            const { updatePlot = !!chartGD } = opts;
+            if (!Array.isArray(star_vec) || !Number.isFinite(star_vec[0])) return;
+            const spanX = viewSpanX || Math.max(1e-3, (X_MAX - X_MIN) || (OUT_DOMAIN.X_MAX - OUT_DOMAIN.X_MIN));
+            const spanY = viewSpanY || Math.max(1e-3, (Y_MAX - Y_MIN) || (OUT_DOMAIN.Y_MAX - OUT_DOMAIN.Y_MIN));
+            const cx = star_vec[0] || 0;
+            const cy = star_vec[1] || 0;
+            setDomain(cx - spanX / 2, cx + spanX / 2, cy - spanY / 2, cy + spanY / 2, { rebuildLandscape: false });
+            ensureStartInView({ forceCenter: true });
+            updateStartMarker();
+            if (updatePlot && chartGD) { refreshContour(); }
+        }
+
+        function reseedLandscape() { reseedBaseWithSeed(landscapeSeed); regenerateSpikesForDomainND(); invalidateContourCache(); markColourStatsDirty(); }
+
+        function regenerateLandscape() {
+            LANDSCAPE_NONCE = (LANDSCAPE_NONCE + 1) >>> 0;
+            landscapeSeed = (Math.imul(landscapeSeed, 1664525) + 1013904223) >>> 0;
+            reseedLandscape();
+            refreshHiddenStart(true);
+            refineStarWithGlobal();
+            refreshContour();
+            resetAll();
+        }
+
+        /* -------------------- LR schedule -------------------- */
+        function currentBaseLR() { return LR_SGD; }
+        function computeLREffective(t, total) {
+            const base = currentBaseLR();
+            const mode = lrSchedSel ? lrSchedSel.value : 'constant';
+            switch (mode) {
+                case 'step': { const k = pStepSize ? parseInt(pStepSize.value, 10) : 40; const g = pStepGamma ? parseFloat(pStepGamma.value) : 0.5; const n = Math.floor(t / Math.max(1, k)); return base * Math.pow(g, n); }
+                case 'cosine': { const m = pCosMin ? parseFloat(pCosMin.value) : 0.1; const ct = Math.cos(Math.PI * Math.min(t, total) / Math.max(1, total)); return base * (m + (1 - m) * 0.5 * (1 + ct)); }
+                case 'exp': { const g = pExpGamma ? parseFloat(pExpGamma.value) : 0.995; return base * Math.pow(g, t); }
+                case 'warmup_cosine': { const warmFrac = pWarmFrac ? parseFloat(pWarmFrac.value) : 0.1; const m = pWarmMin ? parseFloat(pWarmMin.value) : 0.1; const warmSteps = Math.floor(warmFrac * total); if (t <= warmSteps) { return base * (t / Math.max(1, warmSteps)); } else { const tt = Math.min(t - warmSteps, Math.max(1, total - warmSteps)); const ct = Math.cos(Math.PI * tt / Math.max(1, total - warmSteps)); return base * (m + (1 - m) * 0.5 * (1 + ct)); } }
+                case 'constant':
+                default: return base;
+            }
+        }
+        function updateEffectiveLRLabel() { const lrEffLbl = document.getElementById('lr_eff_lbl'); if (!lrEffLbl) return; const eff = computeLREffective(frameIdx, T); lrEffLbl.textContent = eff.toFixed(3); }
+
+        /* -------------------- Simulation loop -------------------- */
+        function stepOnce() {
+            const lrEff = computeLREffective(frameIdx, T);
+            if (optimizers[selectedOpt]) optimizers[selectedOpt].lr = lrEff;
+            updateEffectiveLRLabel();
+
+            if (frameIdx >= T) return;
+            frameIdx++; elStepCount.textContent = frameIdx.toString();
+
+            // update only the selected optimizer in ND
+            const pos = safePos(selectedOpt);
+            let g = grad_observed_nd(pos);
+            g = clampMagVec(g, CLIP_NORM);
+            const next = optimizers[selectedOpt].step(pos, g);
+            positions[selectedOpt] = next;
+            if (!trails[selectedOpt]) trails[selectedOpt] = [];
+            trails[selectedOpt].push([next[0], next[1] || 0]);
+
+            const { line: lineIdx, point: ptIdx } = optimizerTraceIndex(selectedOpt);
+            if (lineIdx >= 0) Plotly.restyle(elChart, { x: [trails[selectedOpt].map(p => p[0])], y: [trails[selectedOpt].map(p => p[1])] }, [lineIdx]);
+            if (ptIdx >= 0) Plotly.restyle(elChart, { x: [[next[0]]], y: [[next[1] || 0]] }, [ptIdx]);
+            const curLoss = updateLegendLosses();
+            appendLossPoint(frameIdx, curLoss);
+
+            // recompute 2D colour slice only for ND>2; throttle refresh for speed
+            if (ND > 2) {
+                contourFrameTicker++;
+                if (contourFrameTicker >= contourUpdateStride()) {
+                    contourFrameTicker = 0;
+                    refreshContour();
+                }
+            } else {
+                contourFrameTicker = 0;
+            }
+
+            if (frameIdx >= T) stopTimer();
+        }
+
+        function loopStep(timestamp) {
+            if (!loopRunning) return;
+            if (lastLoopTs == null) lastLoopTs = timestamp;
+            loopAccumulator += timestamp - lastLoopTs;
+            lastLoopTs = timestamp;
+            if (loopAccumulator >= msPerFrame) {
+                stepOnce();
+                loopAccumulator = 0;
+            }
+            if (loopRunning) rafHandle = requestAnimationFrame(loopStep);
+        }
+        function startTimer() {
+            if (loopRunning) return;
+            loopRunning = true;
+            loopAccumulator = msPerFrame;
+            lastLoopTs = null;
+            rafHandle = requestAnimationFrame(loopStep);
+            playPauseBtn.textContent = "⏸︎ Pause";
+        }
+        function stopTimer() {
+            if (!loopRunning) return;
+            loopRunning = false;
+            if (rafHandle) cancelAnimationFrame(rafHandle);
+            rafHandle = null;
+            lastLoopTs = null;
+            playPauseBtn.textContent = "▶︎ Play";
+        }
+        function updateVisibility() {
+            for (const name of OPT_ORDER) {
+                const { line, point } = optimizerTraceIndex(name);
+                const vis = (name === selectedOpt) ? true : 'legendonly';
+                if (line >= 0) Plotly.restyle(elChart, { visible: vis }, [line]);
+                if (point >= 0) Plotly.restyle(elChart, { visible: vis }, [point]);
+            }
+        }
+        function resetAll() {
+            stopTimer(); frameIdx = 0; updateEffectiveLRLabel(); elStepCount.textContent = "0"; initOptimizers();
+            const lineIndices = optimizerLineIndices(); const ptIndices = optimizerPointIndices();
+            const lineXs = OPT_ORDER.map(n => [positions[n][0]]); const lineYs = OPT_ORDER.map(n => [positions[n][1] || 0]);
+            Plotly.restyle(elChart, { x: lineXs, y: lineYs }, lineIndices);
+            const ptXs = OPT_ORDER.map(n => [positions[n][0]]); const ptYs = OPT_ORDER.map(n => [positions[n][1] || 0]);
+            Plotly.restyle(elChart, { x: ptXs, y: ptYs }, ptIndices);
+            updateVisibility();
+            refreshContour();
+            const curLoss = updateLegendLosses();
+            resetLossPlot(curLoss);
+        }
+        function setSelected(name) {
+            selectedOpt = name;
+            stopTimer();
+            frameIdx = 0;
+            if (elStepCount) elStepCount.textContent = "0";
+            updateEffectiveLRLabel();
+            initOptimizers();
+            const lineIndices = optimizerLineIndices(); const ptIndices = optimizerPointIndices();
+            const lineXs = OPT_ORDER.map(n => [positions[n][0]]); const lineYs = OPT_ORDER.map(n => [positions[n][1] || 0]);
+            Plotly.restyle(elChart, { x: lineXs, y: lineYs }, lineIndices);
+            const ptXs = OPT_ORDER.map(n => [positions[n][0]]); const ptYs = OPT_ORDER.map(n => [positions[n][1] || 0]);
+            Plotly.restyle(elChart, { x: ptXs, y: ptYs }, ptIndices);
+            updateVisibility();
+            refreshContour();
+            const curLoss = updateLegendLosses();
+            resetLossPlot(curLoss);
+        }
+        function applyND(n) {
+            ND = n;
+            // anisotropy per dim (first two fixed, hidden dims randomized)
+            ANIS = new Array(ND).fill(1.0);
+            ANIS[0] = 1.05;
+            if (ND > 1) ANIS[1] = 1.8;
+            for (let d = 2; d < ND; d++) {
+                ANIS[d] = 0.1 + rng() * 1.6; // random widen/narrow for hidden dims
+            }
+            // reseed Fourier basis & spikes
+            reseedBaseWithSeed(landscapeSeed);
+            setDomain(X_MIN, X_MAX, Y_MIN, Y_MAX, { rebuildLandscape: true }); // rebuild DOM_MIN/DOM_MAX & spikes
+            refreshHiddenStart(true);
+            // rebuild optimizers
+            initOptimizers();
+            resetAll();
+            invalidateContourCache();
+            refreshContour();
+            updateLegendLosses();
+        }
+
+        /* -------------------- UI wiring -------------------- */
+        const playPauseBtn = document.getElementById('playPause');
+        const stepBtn = document.getElementById('stepBtn');
+        const resetBtn = document.getElementById('resetBtn');
+        const regenBtn = document.getElementById('regenBtn');
+        const lrSlider = document.getElementById('lrSlider');
+        const lrSchedSel = document.getElementById('lrSched');
+        const pStepSize = document.getElementById('pStepSize');
+        const pStepGamma = document.getElementById('pStepGamma');
+        const pCosMin = document.getElementById('pCosMin');
+        const pExpGamma = document.getElementById('pExpGamma');
+        const pWarmFrac = document.getElementById('pWarmFrac');
+        const pWarmMin = document.getElementById('pWarmMin');
+        const dimSlider = document.getElementById('dimSlider');
+        const dimLbl = document.getElementById('dimLbl');
+        const batchSlider = document.getElementById('batchSlider');
+        const batchLbl = document.getElementById('batchLbl');
+        legendStarLossEl = document.getElementById('legendStarLoss');
+        legendOptBestEl = document.getElementById('legendOptBest');
+        legendOptLossEl = document.getElementById('legendOptLoss');
+
+        playPauseBtn.onclick = () => loopRunning ? stopTimer() : startTimer();
+        stepBtn.onclick = () => { stopTimer(); stepOnce(); };
+        resetBtn.onclick = resetAll;
+        regenBtn.onclick = () => { stopTimer(); regenerateLandscape(); };
+
+        // Radio group for single optimizer selection
+        for (const el of document.querySelectorAll('#optRadios input[type="radio"][name="optChoice"]')) {
+            el.addEventListener('change', (ev) => { if (ev.target.checked) { setSelected(ev.target.value); } });
+        }
+
+        // Learning rate single slider (affects all five)
+        lrSlider.oninput = (e) => { const v = parseFloat(e.target.value); LR_SGD = LR_MOM = LR_RMS = LR_ADAM = LR_ADAMW = LR_MUON = v; updateEffectiveLRLabel(); };
+
+        dimSlider.oninput = (e) => { const n = parseInt(e.target.value, 10); dimLbl.textContent = `${n}D`; applyND(n); };
+        batchSlider.oninput = (e) => {
+            const v = parseInt(e.target.value, 10);
+            BATCH_SIZE = Math.max(1, v);
+            if (batchLbl) batchLbl.textContent = BATCH_SIZE.toString();
+        };
+
+        /* -------------------- Star placement on BASE loss (ND) -------------------- */
+        function randomPointND() { const v = new Array(ND); for (let d = 0; d < ND; d++) { v[d] = DOM_MIN[d] + rng() * (DOM_MAX[d] - DOM_MIN[d]); } return v; }
+
+        function sampleUnitBallND() {
+            // Gaussian then normalize to uniform on sphere, radius^(1/ND)
+            const v = randnN(1.0, ND); const r = Math.max(1e-12, norm(v)); const u = scale(v, 1 / r); const t = Math.pow(rng(), 1 / ND); return scale(u, t);
+        }
+
+        function globalGuessND(samples = GLOBAL_GUESS_SAMPLES) {
+            let bx = randomPointND(); let bL = base_loss_nd(bx);
+            for (let i = 0; i < samples; i++) { const p = randomPointND(); const L = base_loss_nd(p); if (L < bL) { bx = p; bL = L; } }
+            return { x: bx, L: bL };
+        }
+
+        function refineFromND(p0, iter = REFINE_ITERS, samples = REFINE_SAMPLES, radius = REFINE_RADIUS) {
+            let best = p0.slice(); let bestL = base_loss_nd(best);
+            for (let t = 0; t < iter; t++) {
+                let cand = best.slice(); let candL = bestL;
+                for (let s = 0; s < samples; s++) {
+                    const dir = sampleUnitBallND(); const p = add(best, scale(dir, radius)); const L = base_loss_nd(p);
+                    if (L < candL) { candL = L; cand = p; }
+                }
+                if (candL + 1e-12 < bestL) { best = cand; bestL = candL; }
+            }
+            return { x: best, L: bestL };
+        }
+
+        function gradientPolishND(p, steps = POLISH_STEPS) {
+            let x = p.slice(); let lr0 = 0.35;
+            for (let t = 0; t < steps; t++) {
+                const g = clampMagVec(grad_base(x), CLIP_NORM);
+                const k = 0.5 * (1 + Math.cos(Math.PI * t / steps)); const lr = lr0 * (0.15 + 0.85 * k);
+                x = sub(x, scale(g, lr));
+            }
+            return { x, L: base_loss_nd(x) };
+        }
+
+        function refineStarWithGlobal() {
+            // 1) global guess in ND, 2) annealed local refine, 3) polish
+            let cur = globalGuessND(GLOBAL_GUESS_SAMPLES);
+            const radii = [3.0, 1.5, 0.75, 0.35, 0.18];
+            for (const r of radii) { cur = refineFromND(cur.x, REFINE_ITERS, REFINE_SAMPLES, r); }
+            cur = gradientPolishND(cur.x, POLISH_STEPS);
+            star_vec = cur.x.slice();
+            alignLandscapeCenterToStar();
+            rebuildFullLossND();
+            starLossValue = loss_nd(star_vec);
+            centerViewOnStar();
+            return updateLegendLosses();
+        }
+
+    </script>
+</body>
+
+</html>
