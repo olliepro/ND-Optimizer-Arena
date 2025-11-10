@@ -838,7 +838,7 @@
             const mcFloor = Number.isFinite(starLossValue) ? Math.max(0, starLossValue - 1) : null;
             if (mcFloor != null) { floors.push(Math.sqrt(Math.max(1e-9, mcFloor + bias)) + mcFloor); }
             const lo = Math.min(percentile(transformed, 0), ...floors);
-            const hi = Math.max(lo + 1e-6, percentile(transformed, 75));
+            const hi = Math.max(lo + 1e-6, percentile(transformed, 85));
             colourStats = { bias, lo, hi, ready: true };
         }
         function ensureColourStats(minBias = COLOR_LOG_BIAS) {
@@ -1038,7 +1038,7 @@
             xaxis: { title: 'x', gridcolor: '#223', zerolinecolor: '#223', automargin: true, autorange: true },
             yaxis: { title: 'y', gridcolor: '#223', zerolinecolor: '#223', automargin: true, autorange: true },
             legend: { bgcolor: '#12131a', bordercolor: '#223', borderwidth: 1, font: { color: '#e6eef7' } },
-            hovermode: false
+            hovermode: 'closest'
         };
 
         Plotly.newPlot(elChart, traces, layout, { responsive: true, displaylogo: false }).then((gd) => {
