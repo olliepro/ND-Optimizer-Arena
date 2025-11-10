@@ -61,22 +61,23 @@
 
         #chartHoverHint {
             position: absolute;
-            inset: 0;
-            display: flex;
-            align-items: center;
-            justify-content: center;
+            left: 50%;
+            top: 50%;
             font-weight: 600;
             letter-spacing: 0.02em;
             text-transform: uppercase;
             font-size: 13px;
-            color: rgba(230, 238, 247, 0.8);
+            color: rgba(230, 238, 247, 0.9);
             pointer-events: none;
             opacity: 0;
-            transition: opacity 0.15s ease-in-out;
-            text-shadow: 0 0 12px rgba(0, 0, 0, 0.6);
+            transition: opacity 0.1s ease-in-out;
+            text-shadow: 0 0 12px rgba(0, 0, 0, 0.7);
+            transform: translate(-50%, -140%);
+            white-space: nowrap;
+            z-index: 5;
         }
 
-        .chartWrap:hover #chartHoverHint {
+        .chartWrap.show-hint #chartHoverHint {
             opacity: 1;
         }
 
@@ -962,7 +963,34 @@
         const elStepCount = document.getElementById('stepCount');
         const elStepMax = document.getElementById('stepMax');
         const lossPlotEl = document.getElementById('lossPlot');
+        const chartWrapEl = document.querySelector('.chartWrap');
+        const hoverHintEl = document.getElementById('chartHoverHint');
         elStepMax.textContent = T.toString();
+
+        if (chartWrapEl && hoverHintEl) {
+            const updateHintPosition = (clientX, clientY) => {
+                const rect = chartWrapEl.getBoundingClientRect();
+                hoverHintEl.style.left = `${clientX - rect.left}px`;
+                hoverHintEl.style.top = `${clientY - rect.top}px`;
+            };
+            const handlePointerMove = (ev) => {
+                const point = ev.touches && ev.touches[0] ? ev.touches[0] : ev;
+                if (!point || typeof point.clientX !== 'number' || typeof point.clientY !== 'number') return;
+                updateHintPosition(point.clientX, point.clientY);
+            };
+            const showHint = (ev) => {
+                chartWrapEl.classList.add('show-hint');
+                handlePointerMove(ev);
+            };
+            const hideHint = () => chartWrapEl.classList.remove('show-hint');
+            chartWrapEl.addEventListener('mouseenter', showHint);
+            chartWrapEl.addEventListener('mousemove', handlePointerMove);
+            chartWrapEl.addEventListener('mouseleave', hideHint);
+            chartWrapEl.addEventListener('touchstart', (ev) => { showHint(ev); }, { passive: true });
+            chartWrapEl.addEventListener('touchmove', handlePointerMove, { passive: true });
+            chartWrapEl.addEventListener('touchend', hideHint);
+            chartWrapEl.addEventListener('touchcancel', hideHint);
+        }
 
         // 1) Seed & domain BEFORE we build traces
         reseedBaseWithSeed(landscapeSeed);
@@ -993,12 +1021,12 @@
             type: 'contour', z: Zc, x: xs_local, y: ys_local,
             contours: { coloring: 'fill', showlines: true, start: clo, end: chi, size: contourSpan / Math.max(1, INITIAL_LEVELS) },
             colorscale: STEPPED_CS, zmin: clo, zmax: chi, zauto: false, autocolorscale: false,
-            line: { width: 0.7 }, showscale: false, name: 'loss', visible: true
+            line: { width: 0.7 }, showscale: false, name: 'loss', visible: true, hoverinfo: 'skip'
         };
         const startMarker = { type: 'scatter', mode: 'markers', x: [START[0]], y: [START[1]], marker: { symbol: 'square', size: 8, color: '#ddd' }, name: 'start', hoverinfo: 'skip', visible: true };
         const optMarker = { type: 'scatter', mode: 'markers', x: [star_vec[0]], y: [star_vec[1] || 0], marker: { symbol: 'star', size: 12, color: '#fff' }, name: 'optimum', hoverinfo: 'skip', visible: true };
-        function lineTrace(name) { return { type: 'scatter', mode: 'lines', x: [positions[name][0]], y: [positions[name][1] || 0], line: { width: 2, color: colors[name], simplify: false }, name: name + ' path', visible: name === selectedOpt }; }
-        function pointTrace(name) { return { type: 'scatter', mode: 'markers', x: [positions[name][0]], y: [positions[name][1] || 0], marker: { size: 6, color: colors[name] }, name: name, visible: name === selectedOpt }; }
+        function lineTrace(name) { return { type: 'scatter', mode: 'lines', x: [positions[name][0]], y: [positions[name][1] || 0], line: { width: 2, color: colors[name], simplify: false }, name: name + ' path', visible: name === selectedOpt, hoverinfo: 'skip' }; }
+        function pointTrace(name) { return { type: 'scatter', mode: 'markers', x: [positions[name][0]], y: [positions[name][1] || 0], marker: { size: 6, color: colors[name] }, name: name, visible: name === selectedOpt, hoverinfo: 'skip' }; }
 
         const traces = [contour, startMarker, optMarker];
         for (const name of OPT_ORDER) {
@@ -1009,7 +1037,8 @@
             paper_bgcolor: '#0b0c10', plot_bgcolor: '#0b0c10', margin: { l: 20, r: 10, t: 10, b: 30 },
             xaxis: { title: 'x', gridcolor: '#223', zerolinecolor: '#223', automargin: true, autorange: true },
             yaxis: { title: 'y', gridcolor: '#223', zerolinecolor: '#223', automargin: true, autorange: true },
-            legend: { bgcolor: '#12131a', bordercolor: '#223', borderwidth: 1, font: { color: '#e6eef7' } }
+            legend: { bgcolor: '#12131a', bordercolor: '#223', borderwidth: 1, font: { color: '#e6eef7' } },
+            hovermode: false
         };
 
         Plotly.newPlot(elChart, traces, layout, { responsive: true, displaylogo: false }).then((gd) => {
