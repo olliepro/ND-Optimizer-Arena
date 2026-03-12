@@ -5,46 +5,147 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Optimizers on N-Dimensional Terrain</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link
+        href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Serif:ital,wght@0,500;0,600;1,500&display=swap"
+        rel="stylesheet">
     <link rel="icon" href="image.png" type="image/png" />
     <script src="https://cdn.plot.ly/plotly-2.33.0.min.js"></script>
     <style>
+        :root {
+            --bg: #0d0f14;
+            --text: #eceff8;
+            --muted: #b6bfd4;
+            --accent-soft: #e54d67;
+            --line: #2b3447;
+            --line-soft: rgba(120, 138, 177, 0.38);
+            --panel-bg: rgba(15, 19, 32, 0.88);
+            --panel-bg-strong: rgba(16, 20, 32, 0.95);
+            --shadow: 0 18px 42px rgba(0, 0, 0, 0.35);
+        }
+
         html,
         body {
             height: 100%;
         }
 
         body {
-            font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+            font-family: "IBM Plex Sans", sans-serif;
             margin: 0;
-            background: #0b0c10;
-            color: #e6eef7;
-            height: 100%;
-            display: grid;
-            grid-template-rows: auto 1fr;
+            background:
+                radial-gradient(circle at 15% 15%, rgba(229, 77, 103, 0.24), transparent 28%),
+                radial-gradient(circle at 88% 6%, rgba(63, 98, 186, 0.2), transparent 25%),
+                linear-gradient(160deg, #0b0d12 0%, #141822 55%, #131a2a 100%);
+            color: var(--text);
+            min-height: 100vh;
         }
 
         header {
-            padding: 12px 16px;
-            border-bottom: 1px solid #223;
+            position: sticky;
+            top: 0;
+            z-index: 20;
+            background: rgba(13, 15, 20, 0.78);
+            border-bottom: 1px solid rgba(59, 70, 95, 0.5);
+            backdrop-filter: blur(8px);
+        }
+
+        .bg-orb {
+            position: fixed;
+            z-index: -1;
+            width: 18rem;
+            height: 18rem;
+            border-radius: 50%;
+            filter: blur(24px);
+            opacity: 0.26;
+            pointer-events: none;
+        }
+
+        .orb-a {
+            top: 20%;
+            left: -5rem;
+            background: #b31b38;
+        }
+
+        .orb-b {
+            top: 68%;
+            right: -5rem;
+            background: #2867c2;
+        }
+
+        .header-inner {
+            max-width: 1400px;
+            margin: 0 auto;
+            padding: 0.7rem 1rem;
+        }
+
+        .header-row {
+            justify-content: space-between;
+            gap: 1rem 2rem;
+            margin: 0;
+            align-items: flex-start;
+        }
+
+        .arena-kicker {
+            color: var(--accent-soft);
+            font-weight: 600;
+            letter-spacing: 0.07em;
+            text-transform: uppercase;
+            font-size: 0.7rem;
+            margin: 0 0 0.2rem;
+        }
+
+        .arena-title {
+            font-family: "IBM Plex Serif", serif;
+            font-size: clamp(1.05rem, 2.2vw, 1.45rem);
+            letter-spacing: -0.02em;
+            font-weight: 600;
+            margin-bottom: 0.25rem;
+        }
+
+        .header-note {
+            max-width: 340px;
+            text-align: right;
+            color: var(--muted);
+        }
+
+        .header-note a {
+            color: #f3b5c0;
+            text-decoration: none;
+        }
+
+        .header-note a:hover {
+            color: #ffd0d8;
         }
 
         .wrap {
             display: grid;
             grid-template-columns: 380px 1fr;
-            gap: 14px;
-            padding: 12px 16px;
-            height: 100%;
+            gap: 1rem;
+            padding: 1rem;
+            height: calc(100vh - 76px);
+            min-height: calc(100vh - 76px);
+            max-width: 1400px;
+            width: 100%;
+            margin: 0 auto;
+        }
+
+        .wrap>* {
             min-height: 0;
+            min-width: 0;
         }
 
         #controls {
-            background: #12131a;
-            border: 1px solid #223;
-            border-radius: 10px;
-            padding: 12px;
+            background: linear-gradient(165deg, var(--panel-bg), rgba(18, 26, 42, 0.92));
+            border: 1px solid var(--line-soft);
+            border-radius: 14px;
+            padding: 0.85rem;
             position: sticky;
-            top: 12px;
+            top: 5.1rem;
             height: fit-content;
+            max-height: calc(100vh - 6.2rem);
+            overflow-y: auto;
+            box-shadow: var(--shadow);
         }
 
         .chartWrap {
@@ -52,12 +153,17 @@
             width: 100%;
             height: 100%;
             min-height: 0;
+            border-radius: 14px;
+            border: 1px solid var(--line-soft);
+            box-shadow: var(--shadow);
+            background: var(--panel-bg-strong);
+            overflow: hidden;
         }
 
         #chart {
             width: 100%;
             height: 100%;
-            min-height: 0;
+            min-height: 520px;
         }
 
         #chart .hoverlayer {
@@ -97,6 +203,16 @@
         .small {
             opacity: 0.9;
             font-size: 12px;
+            color: var(--muted);
+            line-height: 1.5;
+        }
+
+        .panel-title {
+            font-family: "IBM Plex Serif", serif;
+            font-size: 1.02rem;
+            font-weight: 600;
+            letter-spacing: -0.01em;
+            margin-bottom: 0.35rem;
         }
 
         #lossPlotContainer {
@@ -115,12 +231,35 @@
         input[type="checkbox"],
         .chip {
             accent-color: #6aa2ff;
-            background: #1b1e27;
-            color: #e6eef7;
-            border: 1px solid #334;
+            background: rgba(255, 255, 255, 0.05);
+            color: var(--text);
+            border: 1px solid var(--line);
             border-radius: 8px;
             padding: 8px 10px;
             cursor: pointer;
+        }
+
+        button {
+            font-weight: 600;
+            transition: transform 180ms ease, border-color 180ms ease, background 180ms ease;
+        }
+
+        button:hover:not(:disabled) {
+            transform: translateY(-1px);
+            border-color: var(--accent-soft);
+            background: rgba(229, 77, 103, 0.16);
+        }
+
+        select {
+            min-width: 152px;
+        }
+
+        input[type="range"] {
+            flex: 1 1 140px;
+            padding: 0;
+            border: 0;
+            background: transparent;
+            accent-color: #e54d67;
         }
 
         button:disabled {
@@ -135,7 +274,7 @@
         }
 
         .divider {
-            border-top: 1px solid #223;
+            border-top: 1px solid var(--line);
             margin: 10px 0;
         }
 
@@ -172,8 +311,8 @@
         }
 
         code {
-            background: #10131a;
-            border: 1px solid #223;
+            background: rgba(8, 12, 22, 0.85);
+            border: 1px solid var(--line);
             border-radius: 6px;
             padding: 2px 6px;
         }
@@ -189,25 +328,89 @@
             align-items: center;
             gap: 8px;
         }
+
+        #schedParams {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 8px;
+        }
+
+        .info-metrics {
+            margin-top: 6px;
+        }
+
+        @media (max-width: 1100px) {
+            body {
+                display: block;
+                min-height: 100%;
+            }
+
+            .wrap {
+                grid-template-columns: 1fr;
+                grid-template-rows: auto minmax(62vh, 1fr);
+                height: auto;
+                min-height: calc(100vh - 76px);
+            }
+
+            #controls {
+                position: static;
+                max-height: none;
+            }
+
+            .chartWrap {
+                min-height: 62vh;
+            }
+
+            #chart {
+                min-height: 62vh;
+            }
+
+            .header-note {
+                text-align: left;
+                max-width: none;
+            }
+        }
+
+        @media (max-width: 760px) {
+            .optgroup {
+                grid-template-columns: 1fr;
+            }
+
+            #schedParams {
+                grid-template-columns: 1fr;
+            }
+
+            .row {
+                gap: 6px;
+            }
+        }
     </style>
 </head>
 
 <body>
+    <div class="bg-orb orb-a" aria-hidden="true"></div>
+    <div class="bg-orb orb-b" aria-hidden="true"></div>
+
     <header>
-        <div class="row" style="justify-content:space-between">
-            <div>
-                <div style="font-size:18px; font-weight:600">ND Optimizer Arena · Fractal Basins & Orthogonal Spikes
+        <div class="header-inner">
+            <div class="row header-row">
+                <div>
+                    <p class="arena-kicker">Interactive Project</p>
+                    <div class="arena-title">ND Optimizer Arena · Fractal Basins & Orthogonal Spikes</div>
+                    <div class="small">Procedural loss field • clipped noisy grads • log-spectrum colouring • live 2–15D
+                        slices</div>
                 </div>
-                <div class="small">Procedural loss field • clipped noisy grads • log-spectrum colouring • live 2–15D
-                    slices</div>
+                <div class="small header-note">
+                    Click to set start • slice updates with other dims.<br />
+                    <a href="/projects">Back to projects</a>
+                </div>
             </div>
-            <div class="small">Click to set start • slice updates with other dims.</div>
         </div>
     </header>
 
     <div class="wrap">
         <div id="controls">
-            <div style="font-weight:600; margin-bottom:6px;">Playback</div>
+            <div class="panel-title">Playback</div>
             <div class="row">
                 <button id="playPause">▶︎ Play</button>
                 <button id="stepBtn">Step</button>
@@ -216,7 +419,7 @@
             </div>
             <div class="divider"></div>
 
-            <div style="font-weight:600; margin-bottom:6px;">Optimizer</div>
+            <div class="panel-title">Optimizer</div>
             <div class="optgroup" id="optRadios">
                 <label><input type="radio" name="optChoice" value="SGD" checked> <span
                         class="legendSwatch sgd"></span>SGD</label>
@@ -255,7 +458,7 @@
                 </select>
             </div>
 
-            <div id="schedParams" class="small" style="display:grid; grid-template-columns: 1fr 1fr; gap:8px;">
+            <div id="schedParams" class="small">
                 <!-- Step decay params -->
                 <label id="pStepSizeLbl" style="display:none;">Step size k: <code id="pStepSizeVal">40</code></label>
                 <input id="pStepSize" type="range" min="5" max="160" step="5" value="40" style="display:none;" />
@@ -282,7 +485,7 @@
 
             <div class="divider"></div>
 
-            <div style="font-weight:600; margin-bottom:6px;">Dimensions</div>
+            <div class="panel-title">Dimensions</div>
             <div class="row">
                 <label>n_dimensions</label>
                 <input id="dimSlider" type="range" min="2" max="15" step="1" value="2" />
@@ -291,11 +494,11 @@
 
             <div class="divider"></div>
 
-            <div style="font-weight:600; margin-bottom:6px;">Info</div>
+            <div class="panel-title">Info</div>
             <div class="small">
                 Steps: <code id="stepCount">0</code> / <code id="stepMax">640</code><br />
                 Grad clip: <code>6.0</code> &nbsp;|&nbsp; h: <code>1e-3</code><br />
-                <div style="margin-top:6px;">
+                <div class="info-metrics">
                     <span class="small">All Time Best Loss: <code id="legendStarLoss">--</code></span><br />
                     <span class="small">Cur. Best Loss: <code id="legendOptBest">--</code></span><br />
                     <span class="small">Cur. Loss: <code id="legendOptLoss">--</code></span>
@@ -303,7 +506,7 @@
             </div>
 
             <div id="lossPlotContainer">
-                <div style="font-weight:600; margin-bottom:4px;">Loss curve</div>
+                <div class="panel-title">Loss curve</div>
                 <div id="lossPlot"></div>
             </div>
         </div>
@@ -1007,6 +1210,14 @@
         let starLossValue = null;
 
         /* -------------------- Plotly Setup (EXECUTION ORDER FIXED) -------------------- */
+        const PLOT_THEME = {
+            paper: 'rgba(16, 20, 32, 0.95)',
+            plot: '#0b0d12',
+            grid: 'rgba(120, 138, 177, 0.24)',
+            axisText: '#d8e2fd',
+            legendBg: 'rgba(16, 20, 32, 0.9)',
+            legendBorder: 'rgba(120, 138, 177, 0.38)'
+        };
         const colors = { "SGD": "#1f77b4", "Momentum": "#ff7f0e", "RMSProp": "#2ca02c", "Adam": "#d62728", "AdamW": "#9467bd", "Muon": "#8c564b" };
         let frameIdx = 0, msPerFrame = 30;
         let loopRunning = false;
@@ -1098,8 +1309,8 @@
             colorscale: DIVERGENT_CS, zmin: clo, zmax: chi, zauto: false, autocolorscale: false,
             line: { width: 0.7 }, showscale: false, name: 'loss', visible: true
         };
-        const startMarker = { type: 'scatter', mode: 'markers', x: [START[0]], y: [START[1]], marker: { symbol: 'square', size: 10, color: '#ddd' }, name: 'start', visible: true, showlegend: false };
-        const optMarker = { type: 'scatter', mode: 'markers', x: [star_vec[0]], y: [star_vec[1] || 0], marker: { symbol: 'star', size: 12, color: '#fff' }, name: 'optimum', visible: true, showlegend: false };
+        const startMarker = { type: 'scatter', mode: 'markers', x: [START[0]], y: [START[1]], marker: { symbol: 'square', size: 10, color: '#d8e2fd' }, name: 'start', visible: true, showlegend: false };
+        const optMarker = { type: 'scatter', mode: 'markers', x: [star_vec[0]], y: [star_vec[1] || 0], marker: { symbol: 'star', size: 12, color: '#f5c56b' }, name: 'optimum', visible: true, showlegend: false };
         function lineTrace(name) {
             const isSelected = selectedOpts.has(name);
             return {
@@ -1133,18 +1344,20 @@
         }
 
         const layout = {
-            paper_bgcolor: '#0b0c10', plot_bgcolor: '#0b0c10', margin: { l: 20, r: 10, t: 10, b: 30 },
+            paper_bgcolor: PLOT_THEME.paper, plot_bgcolor: PLOT_THEME.plot, margin: { l: 20, r: 10, t: 10, b: 30 },
             xaxis: {
                 title: '',
-                gridcolor: '#223', zerolinecolor: '#223', automargin: true, autorange: true,
+                color: PLOT_THEME.axisText,
+                gridcolor: PLOT_THEME.grid, zerolinecolor: PLOT_THEME.grid, automargin: true, autorange: true,
                 showticklabels: false, ticks: '', ticklen: 0
             },
             yaxis: {
                 title: '',
-                gridcolor: '#223', zerolinecolor: '#223', automargin: true, autorange: true,
+                color: PLOT_THEME.axisText,
+                gridcolor: PLOT_THEME.grid, zerolinecolor: PLOT_THEME.grid, automargin: true, autorange: true,
                 showticklabels: false, ticks: '', ticklen: 0
             },
-            legend: { bgcolor: '#12131a', bordercolor: '#223', borderwidth: 1, font: { color: '#e6eef7' } },
+            legend: { bgcolor: PLOT_THEME.legendBg, bordercolor: PLOT_THEME.legendBorder, borderwidth: 1, font: { color: PLOT_THEME.axisText } },
             hovermode: 'closest'
         };
 
@@ -1269,15 +1482,15 @@
                 visible: selectedOpts.has(name)
             }));
             const lossLayout = {
-                paper_bgcolor: '#12131a',
-                plot_bgcolor: '#0b0c10',
+                paper_bgcolor: PLOT_THEME.paper,
+                plot_bgcolor: PLOT_THEME.plot,
                 margin: { l: 32, r: 8, t: 8, b: 44 },
                 height: 140,
                 showlegend: false,
                 xaxis: {
                     title: { text: 'Optimizer Steps', standoff: 18 },
-                    color: '#b7c4d9',
-                    gridcolor: '#1d2332',
+                    color: PLOT_THEME.axisText,
+                    gridcolor: PLOT_THEME.grid,
                     zeroline: false,
                     tickfont: { size: 10 },
                     range: [0, T],
@@ -1285,10 +1498,10 @@
                 },
                 yaxis: {
                     title: { text: 'Loss Value', standoff: 18 },
-                    color: '#b7c4d9',
-                    gridcolor: '#1d2332',
+                    color: PLOT_THEME.axisText,
+                    gridcolor: PLOT_THEME.grid,
                     zeroline: true,
-                    zerolinecolor: '#2d3446',
+                    zerolinecolor: PLOT_THEME.grid,
                     tickfont: { size: 10 },
                     range: lossPlotRangeBounds(),
                     automargin: true
